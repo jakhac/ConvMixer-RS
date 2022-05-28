@@ -111,8 +111,8 @@ train_acc_hist = []
 val_loss_hist = []
 val_acc_hist = []
 
-if torch.cuda.is_available():
-    model = model.to(device)
+# if torch.cuda.is_available():
+#     model = model.to(device)
 
 # Main training loop
 print('Start main training loop.')

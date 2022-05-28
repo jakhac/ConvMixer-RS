@@ -19,6 +19,10 @@ def train_batch(train_loader, model, optimizer, loss_fn):
     
     n_batches = len(train_loader)
     
+    dev = torch.device('cuda:0')
+    if torch.cuda.is_available():
+        model = model.to(dev)
+    
     train_loss_accu = 0.0
     train_acc_accu = 0.0
     model.train()
@@ -26,7 +30,7 @@ def train_batch(train_loader, model, optimizer, loss_fn):
 
         # Transfer to GPU if available
         if torch.cuda.is_available():
-            X, y = X.to(torch.device('cuda:0')), y.to(torch.device('cuda:0'))
+            X, y = X.to(dev), y.to(dev)
         
         # Clear gradients and pass data through network
         optimizer.zero_grad()
@@ -69,6 +73,10 @@ def validate_batch(val_loader, model, loss_fn):
     val_loss_accu = 0.0
     val_acc_accu = 0.0
     
+    dev = torch.device('cuda:0')
+    if torch.cuda.is_available():
+        model = model.to(dev)
+    
     model.eval()
     with torch.no_grad():
         
@@ -76,7 +84,7 @@ def validate_batch(val_loader, model, loss_fn):
             
             # Transfer to GPU if available
             if torch.cuda.is_available():
-                X.to(torch.device('cuda:0')), y.to(torch.device('cuda:0'))
+                X, y = X.to(dev), y.to(dev)
         
             outputs = model(X)
             
