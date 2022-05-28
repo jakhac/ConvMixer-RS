@@ -95,6 +95,8 @@ train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
 
 
 #### Training Preparation ####
+device = torch.device('cuda:0')
+
 model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size, 
                   patch_size=args.p_size, n_classes=19)
 loss_fn = nn.BCEWithLogitsLoss()
@@ -110,7 +112,7 @@ val_loss_hist = []
 val_acc_hist = []
 
 if torch.cuda.is_available():
-    model = model.cuda()
+    model = model.to(device)
 
 # Main training loop
 print('Start main training loop.')

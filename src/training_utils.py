@@ -26,7 +26,7 @@ def train_batch(train_loader, model, optimizer, loss_fn):
 
         # Transfer to GPU if available
         if torch.cuda.is_available():
-            X, y = X.cuda(), y.cuda()
+            X, y = X.to(torch.device('cuda:0')), y.to(torch.device('cuda:0'))
         
         # Clear gradients and pass data through network
         optimizer.zero_grad()
@@ -76,7 +76,7 @@ def validate_batch(val_loader, model, loss_fn):
             
             # Transfer to GPU if available
             if torch.cuda.is_available():
-                X, y = X.cuda(), y.cuda()
+                X.to(torch.device('cuda:0')), y.to(torch.device('cuda:0'))
         
             outputs = model(X)
             
