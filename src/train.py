@@ -21,6 +21,7 @@ from torch import Tensor, cat, stack
 from torch.utils.data import DataLoader
 import torch.optim as optim
 import torch.nn as nn
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
 
 from dataset_class import *
@@ -36,15 +37,18 @@ parser = argparse.ArgumentParser(description="ConvMixer Parameters")
 
 # Training parameters
 parser.add_argument('--epochs', type=int, default=25)
-parser.add_argument('--batch_size', type=int, default=256)
 parser.add_argument('--ds_size', type=int, default=None)
+parser.add_argument('--batch_size', type=int, default=256)
+parser.add_argument('--lr', type=int, default=0.001)
+parser.add_argument('--momentum', type=int, default=0.9)
+parser.add_argument('--RLROP', type=bool, default=False)
 
 
-parser.add_argument('--save_training', default=True,
+parser.add_argument('--save_training', type=bool, default=True,
                     help='save plots and checkpoints to model directory')
 
 # Model Parameters
-parser.add_argument('--h', type=int, default=512)
+parser.add_argument('--h', type=int, default=128)
 parser.add_argument('--depth', type=int, default=8)
 parser.add_argument('--k_size', type=int, default=9)
 parser.add_argument('--p_size', type=int, default=7)
@@ -87,6 +91,9 @@ cur = txn.cursor()
 with open(f'{model_dir}/config.yaml', 'w') as outfile:
     yaml.dump(args.__dict__, outfile, default_flow_style=False)
 
+
+# Prepare dataloaders
+# TODO: Add WeightedSampler to reduce overfit?
 val_ds = BenDataset(VAL_CSV_FILE, BEN_LMDB_PATH, args.ds_size)
 train_ds = BenDataset(TRAIN_CSV_FILE, BEN_LMDB_PATH, args.ds_size)
 
@@ -100,8 +107,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size, 
                   patch_size=args.p_size, n_classes=19)
 loss_fn = nn.BCEWithLogitsLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
-
+optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+scheduler = ReduceLROnPlateau(optimizer, 'min')
 
 #### Training ####
 val_loss_min = np.inf
@@ -145,6 +152,8 @@ for e in range(args.epochs):
         writer.add_scalar("val_loss", val_loss, e)
         writer.add_scalar("train_acc", train_acc, e)
         writer.add_scalar("val_acc", val_acc, e)
+        
+        scheduler.step(val_loss)
         
         # Save checkpoint model if validation loss improves
         if args.save_training and val_loss < val_loss_min:

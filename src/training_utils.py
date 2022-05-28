@@ -19,10 +19,6 @@ def train_batch(train_loader, model, optimizer, loss_fn, dev):
     
     n_batches = len(train_loader)
     
-    # dev = torch.device('cuda:0')
-    # if torch.cuda.is_available():
-    #     model = model.to(dev)
-    
     train_loss_accu = 0.0
     train_acc_accu = 0.0
     model.train()
@@ -72,10 +68,6 @@ def validate_batch(val_loader, model, loss_fn, dev):
     
     val_loss_accu = 0.0
     val_acc_accu = 0.0
-    
-    # dev = torch.device('cuda:0')
-    # if torch.cuda.is_available():
-    #     model = model.to(dev)
     
     model.eval()
     with torch.no_grad():
