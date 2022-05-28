@@ -95,7 +95,7 @@ train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
 
 
 #### Training Preparation ####
-device = torch.device('cuda:0')
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size, 
                   patch_size=args.p_size, n_classes=19)
@@ -111,8 +111,10 @@ train_acc_hist = []
 val_loss_hist = []
 val_acc_hist = []
 
-# if torch.cuda.is_available():
-#     model = model.to(device)
+if torch.cuda.is_available():
+    model = model.to(device)
+    model = nn.DataParallel(model)
+
 
 # Main training loop
 print('Start main training loop.')
@@ -123,14 +125,16 @@ for e in range(args.epochs):
 
         # Inference, backpropagation, weight adjustments
         model.train()
-        train_loss, train_acc = train_batch(val_loader, model, optimizer, loss_fn)
+        train_loss, train_acc = train_batch(val_loader, model, optimizer, 
+                                            loss_fn, device)
         train_loss_hist.append(train_loss)
         train_acc_hist.append(train_acc)
             
         
         # Evaluate on validation data
         model.eval()
-        val_loss, val_acc = validate_batch(train_loader, model, loss_fn)
+        val_loss, val_acc = validate_batch(train_loader, model,
+                                           loss_fn, device)
         val_loss_hist.append(val_loss)
         val_acc_hist.append(val_acc)
 

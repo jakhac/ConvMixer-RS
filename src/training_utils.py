@@ -3,7 +3,7 @@ from sklearn.metrics import accuracy_score
 from torchmetrics.functional import accuracy
 
 
-def train_batch(train_loader, model, optimizer, loss_fn):
+def train_batch(train_loader, model, optimizer, loss_fn, dev):
     """Perform a full training step for given batches in train_loader.
 
     Args:
@@ -19,9 +19,9 @@ def train_batch(train_loader, model, optimizer, loss_fn):
     
     n_batches = len(train_loader)
     
-    dev = torch.device('cuda:0')
-    if torch.cuda.is_available():
-        model = model.to(dev)
+    # dev = torch.device('cuda:0')
+    # if torch.cuda.is_available():
+    #     model = model.to(dev)
     
     train_loss_accu = 0.0
     train_acc_accu = 0.0
@@ -55,7 +55,7 @@ def train_batch(train_loader, model, optimizer, loss_fn):
     return train_loss, train_acc
 
 
-def validate_batch(val_loader, model, loss_fn):
+def validate_batch(val_loader, model, loss_fn, dev):
     """Perform validation on val_loader images.
 
     Args:
@@ -73,9 +73,9 @@ def validate_batch(val_loader, model, loss_fn):
     val_loss_accu = 0.0
     val_acc_accu = 0.0
     
-    dev = torch.device('cuda:0')
-    if torch.cuda.is_available():
-        model = model.to(dev)
+    # dev = torch.device('cuda:0')
+    # if torch.cuda.is_available():
+    #     model = model.to(dev)
     
     model.eval()
     with torch.no_grad():
