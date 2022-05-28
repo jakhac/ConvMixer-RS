@@ -1,4 +1,3 @@
-from ipykernel import connect_qtconsole
 import pandas as pd
 import numpy as np
 import lmdb
