@@ -25,7 +25,7 @@ LABELS = [
 
 class BenDataset(Dataset):
 
-    def __init__(self, csv_file, lmdb_path, size=0):
+    def __init__(self, csv_file, lmdb_path, size=None):
         """
         Load csv and connect to lmdb file.
 
@@ -48,7 +48,7 @@ class BenDataset(Dataset):
 
 
     def __len__(self):
-        if self.size > 0 and self.size < len(self.patch_frame):
+        if self.size is not None and self.size > 0 and self.size < len(self.patch_frame):
             return self.size
         
         return len(self.patch_frame)

@@ -1,4 +1,6 @@
 import os
+import argparse
+import yaml
 
 import lmdb
 from bigearthnet_patch_interface.s2_interface import BigEarthNet_S2_Patch
@@ -30,8 +32,24 @@ from training_utils import train_batch, validate_batch, save_complete_model
 
 ### CONFIG ###
 
-SAVE_TRAINING = True
+parser = argparse.ArgumentParser(description="ConvMixer Parameters")
 
+# Training parameters
+parser.add_argument('--epochs', type=int, default=25)
+parser.add_argument('--batch_size', type=int, default=256)
+parser.add_argument('--ds_size', type=int, default=None)
+
+
+parser.add_argument('--save_training', default=True,
+                    help='save plots and checkpoints to model directory')
+
+# Model Parameters
+parser.add_argument('--h', type=int, default=512)
+parser.add_argument('--depth', type=int, default=8)
+parser.add_argument('--k_size', type=int, default=9)
+parser.add_argument('--p_size', type=int, default=7)
+
+args = parser.parse_args()
 
 
 
@@ -53,38 +71,37 @@ assert os.path.isdir(BEN_LMDB_PATH)
 assert os.path.isfile(TRAIN_CSV_FILE)
 assert os.path.isdir(PATH_TO_MODELS)
 
+timestamp = datetime.now().strftime('%m-%d_%H%M')
+model_name = f'ConvMx-{args.h}-{args.depth}'
+model_dir = PATH_TO_MODELS + '/' + timestamp + '-' + model_name
+
+# Store all model specific files in {model_dir}
+assert not os.path.isdir(model_dir)
+os.mkdir(model_dir)
+
 env = lmdb.open(BEN_LMDB_PATH, readonly=True, readahead=False, lock=False)
 txn = env.begin()
 cur = txn.cursor()
 
-val_ds = BenDataset(VAL_CSV_FILE, BEN_LMDB_PATH)
-train_ds = BenDataset(TRAIN_CSV_FILE, BEN_LMDB_PATH)
+# Dump arguments into yaml file
+with open(f'{model_dir}/config.yaml', 'w') as outfile:
+    yaml.dump(args.__dict__, outfile, default_flow_style=False)
 
-val_loader = DataLoader(val_ds, batch_size=256, shuffle=True)
-train_loader = DataLoader(train_ds, batch_size=256, shuffle=True)
+val_ds = BenDataset(VAL_CSV_FILE, BEN_LMDB_PATH, args.ds_size)
+train_ds = BenDataset(TRAIN_CSV_FILE, BEN_LMDB_PATH, args.ds_size)
+
+val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=True)
+train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
 
 
 #### Training Preparation ####
-h = 256
-depth = 8
-# kernel_size
-# patch_size
-
-timestamp = datetime.now().strftime('%m-%d_%H%M')
-model_name = f'ConvMx-{h}-{depth}'
-model_dir = timestamp + '-' + model_name
-
-# Store all model specific files in this directory
-assert not os.path.isdir(PATH_TO_MODELS + '/' + model_dir)
-os.mkdir(PATH_TO_MODELS + '/' + model_dir)
-
-model = ConvMixer(10, h, depth, n_classes=19)
+model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size, 
+                  patch_size=args.p_size, n_classes=19)
 loss_fn = nn.BCEWithLogitsLoss()
 optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
 
 
 #### Training ####
-n_epochs = 1
 val_loss_min = np.inf
 
 train_loss_hist = []
@@ -97,10 +114,10 @@ if torch.cuda.is_available():
 
 # Main training loop
 print('Start main training loop.')
-for e in range(n_epochs):
+for e in range(args.epochs):
 
     try:
-        print(f'\nEpoch{e+1:3d}/{n_epochs:3d}')
+        print(f'\nEpoch{e+1:3d}/{args.epochs:3d}')
 
         # Inference, backpropagation, weight adjustments
         model.train()
@@ -124,10 +141,10 @@ for e in range(n_epochs):
         writer.add_scalar("val_acc", val_acc, e)
         
         # Save checkpoint model if validation loss improves
-        if SAVE_TRAINING and val_loss < val_loss_min:
+        if args.save_training and val_loss < val_loss_min:
             print(f'val_loss decreased ({val_loss_min:.6f} --> {val_loss:.6f}). Saving model weights ...')
 
-            p = PATH_TO_MODELS + f'/{model_dir}/e{e+1}_{model_name}.pt'
+            p = f'{model_dir}/e{e+1}_{model_name}.pt'
             save_complete_model(p, model)
             
             val_loss_min = val_loss
@@ -138,16 +155,16 @@ for e in range(n_epochs):
     
 
 print('Finished Training')
-if SAVE_TRAINING:
+if args.save_training:
     print('Saving final model ...')
-    p = PATH_TO_MODELS + f'/{model_dir}/{model_name}.pt'
+    p = f'{model_dir}/{model_name}.pt'
     save_complete_model(p, model)
 
 
 writer.close()
 
 #### Save Training History ####
-if SAVE_TRAINING:
+if args.save_training:
     fig = plt.figure(figsize=(16,4))
     ax = fig.add_subplot(121)
     ax.plot(val_loss_hist, label='val')
@@ -165,6 +182,6 @@ if SAVE_TRAINING:
     ax.set_title("accuracy")
     ax.set_xlabel("epochs")
 
-    plt.savefig(PATH_TO_MODELS +  f'/{model_dir}/{model_name}.pdf')
+    plt.savefig(f'{model_dir}/{model_name}.pdf')
 
 
