@@ -1,5 +1,6 @@
 import torch
 from sklearn.metrics import accuracy_score
+from torchmetrics.functional import accuracy
 
 
 def train_batch(train_loader, model, optimizer, loss_fn):
@@ -10,6 +11,7 @@ def train_batch(train_loader, model, optimizer, loss_fn):
         model (Model): model
         optimizer (optimizer): optimizer
         loss_fn (criterion): loss function
+        accuracy (accuracy): accuracy object
 
     Returns:
         (float, float): (loss, accuracy) for this data_loader
@@ -32,7 +34,7 @@ def train_batch(train_loader, model, optimizer, loss_fn):
         
         # Keep track of accuracy in this epoch
         y_pred = get_predictions_for_batch(outputs)
-        train_acc_accu += get_accuracy_for_batch(y, y_pred)
+        train_acc_accu += get_accuracy_for_batch(y_pred.to(torch.int), y.to(torch.int))
         
         # Add loss to accumulator
         loss = loss_fn(outputs, y)
@@ -56,6 +58,7 @@ def validate_batch(val_loader, model, loss_fn):
         val_loader (DataLoader): data loader with validation data
         model (Model): model
         loss_fn (criterion): loss function
+        accuracy (accuracy): accuracy object
 
     Returns:
         (float, float): (loss, accuracy) for data loader
@@ -79,7 +82,7 @@ def validate_batch(val_loader, model, loss_fn):
             
             # Keep track of accuracy in this epoch
             y_pred = get_predictions_for_batch(outputs)
-            val_acc_accu += get_accuracy_for_batch(y, y_pred)
+            val_acc_accu += get_accuracy_for_batch(y_pred.to(torch.int), y.to(torch.int))
                 
             # Add loss to accumulator
             loss = loss_fn(outputs, y)
@@ -171,4 +174,4 @@ def get_predictions_for_batch(outputs):
 def get_accuracy_for_batch(y_true, y_pred):
     assert y_true.shape == y_pred.shape
     
-    return accuracy_score(y_true.detach().numpy(), y_pred.detach().numpy())
+    return accuracy(y_pred, y_true, subset_accuracy=True)

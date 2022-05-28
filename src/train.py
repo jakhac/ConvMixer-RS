@@ -12,6 +12,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score
 
+from torchmetrics import Accuracy
+
 import torch
 from torch import Tensor, cat, stack
 from torch.utils.data import DataLoader
@@ -28,7 +30,7 @@ from training_utils import train_batch, validate_batch, save_complete_model
 
 ### CONFIG ###
 
-SAVE_TRAINING = False
+SAVE_TRAINING = True
 
 
 
@@ -55,11 +57,11 @@ env = lmdb.open(BEN_LMDB_PATH, readonly=True, readahead=False, lock=False)
 txn = env.begin()
 cur = txn.cursor()
 
-val_ds = BenDataset(VAL_CSV_FILE, BEN_LMDB_PATH)
-train_ds = BenDataset(TRAIN_CSV_FILE, BEN_LMDB_PATH)
+val_ds = BenDataset(VAL_CSV_FILE, BEN_LMDB_PATH, 32)
+train_ds = BenDataset(TRAIN_CSV_FILE, BEN_LMDB_PATH, 32)
 
-val_loader = DataLoader(val_ds, batch_size=256, shuffle=True)
-train_loader = DataLoader(train_ds, batch_size=256, shuffle=True)
+val_loader = DataLoader(val_ds, batch_size=16, shuffle=True)
+train_loader = DataLoader(train_ds, batch_size=16, shuffle=True)
 
 
 #### Training Preparation ####
@@ -78,11 +80,11 @@ os.mkdir(PATH_TO_MODELS + '/' + model_dir)
 
 model = ConvMixer(10, h, depth, n_classes=19)
 loss_fn = nn.BCEWithLogitsLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
 
 
 #### Training ####
-n_epochs = 1
+n_epochs = 25
 val_loss_min = np.inf
 
 train_loss_hist = []
@@ -93,30 +95,28 @@ val_acc_hist = []
 if torch.cuda.is_available():
     model = model.cuda()
 
-print('Start main training loop.')
-
 # Main training loop
+print('Start main training loop.')
 for e in range(n_epochs):
-    
+
     try:
         print(f'\nEpoch{e+1:3d}/{n_epochs:3d}')
 
         # Inference, backpropagation, weight adjustments
         model.train()
         train_loss, train_acc = train_batch(val_loader, model, optimizer, loss_fn)
-            
         train_loss_hist.append(train_loss)
         train_acc_hist.append(train_acc)
+            
         
         # Evaluate on validation data
         model.eval()
         val_loss, val_acc = validate_batch(train_loader, model, loss_fn)
-            
         val_loss_hist.append(val_loss)
         val_acc_hist.append(val_acc)
-        
-        print(f'train_loss={train_loss:.4f}', f'train_acc={train_acc:.4f}', end=" ")
-        print(f'val_loss={val_loss:.4f}', f'val_acc={val_acc:.4f}')
+
+        print(f'train_loss={train_loss:.4f} train_acc={train_acc:.4f}', end=" ")
+        print(f'val_loss={val_loss:.4f} val_acc={val_acc:.4f}')
         
         writer.add_scalar("train_loss", train_loss, e)
         writer.add_scalar("val_loss", val_loss, e)
