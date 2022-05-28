@@ -78,11 +78,11 @@ os.mkdir(PATH_TO_MODELS + '/' + model_dir)
 
 model = ConvMixer(10, h, depth, n_classes=19)
 loss_fn = nn.BCEWithLogitsLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
 
 #### Training ####
-n_epochs = 100
+n_epochs = 1
 val_loss_min = np.inf
 
 train_loss_hist = []
