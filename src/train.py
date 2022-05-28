@@ -57,11 +57,11 @@ env = lmdb.open(BEN_LMDB_PATH, readonly=True, readahead=False, lock=False)
 txn = env.begin()
 cur = txn.cursor()
 
-val_ds = BenDataset(VAL_CSV_FILE, BEN_LMDB_PATH, 32)
-train_ds = BenDataset(TRAIN_CSV_FILE, BEN_LMDB_PATH, 32)
+val_ds = BenDataset(VAL_CSV_FILE, BEN_LMDB_PATH)
+train_ds = BenDataset(TRAIN_CSV_FILE, BEN_LMDB_PATH)
 
-val_loader = DataLoader(val_ds, batch_size=16, shuffle=True)
-train_loader = DataLoader(train_ds, batch_size=16, shuffle=True)
+val_loader = DataLoader(val_ds, batch_size=256, shuffle=True)
+train_loader = DataLoader(train_ds, batch_size=256, shuffle=True)
 
 
 #### Training Preparation ####
@@ -84,7 +84,7 @@ optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
 
 
 #### Training ####
-n_epochs = 25
+n_epochs = 1
 val_loss_min = np.inf
 
 train_loss_hist = []
@@ -146,7 +146,6 @@ if SAVE_TRAINING:
 
 writer.close()
 
-
 #### Save Training History ####
 if SAVE_TRAINING:
     fig = plt.figure(figsize=(16,4))
@@ -159,8 +158,8 @@ if SAVE_TRAINING:
     ax.set_xlabel("epochs")
 
     ax = fig.add_subplot(122)
-    ax.plot(val_acc_hist, label='val')
-    ax.plot(train_acc_hist, label='train')
+    ax.plot([v.cpu().detach().numpy() for v in val_acc_hist], label='val')
+    ax.plot([v.cpu().detach().numpy() for v in train_acc_hist], label='train')
     ax.legend(loc="lower right")
     ax.set_ylim([0, 1])
     ax.set_title("accuracy")
