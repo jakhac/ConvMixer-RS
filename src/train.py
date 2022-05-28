@@ -47,8 +47,8 @@ TEST_CSV_FILE = os.environ.get("TEST_CSV")
 VAL_CSV_FILE = os.environ.get("VAL_CSV")
 PATH_TO_MODELS = os.environ.get("PATH_TO_MODELS")
 
-assert Path(BEN_LMDB_PATH).exists()
-assert Path(TRAIN_CSV_FILE).exists()
+assert os.path.isdir(BEN_LMDB_PATH)
+assert os.path.isfile(TRAIN_CSV_FILE)
 assert os.path.isdir(PATH_TO_MODELS)
 
 env = lmdb.open(BEN_LMDB_PATH, readonly=True, readahead=False, lock=False)
