@@ -111,6 +111,7 @@ def main():
         yaml.dump(args.__dict__, outfile, default_flow_style=False)
     
     
+    print(args.__dict__)
     print("Spawn")
     mp.spawn(train, nprocs=args.ngpus_per_node, args=(args,))
 
@@ -147,11 +148,11 @@ def train(gpu, args):
     
     train_sampler = DistributedSampler(train_ds, num_replicas=args.world_size, rank=rank)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size,
-                              shuffle=True, sampler=train_sampler)
+                              shuffle=False, sampler=train_sampler)
     
     val_sampler = DistributedSampler(val_ds, num_replicas=args.world_size, rank=rank)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size,
-                            shuffle=True, sampler=val_sampler)
+                            shuffle=False, sampler=val_sampler)
 
 
     val_loss_min = np.inf
