@@ -22,11 +22,11 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
-import torch.nn.DataParallel as DP
+from torch.nn import DataParallel as DP
 
 from dataset_class import *
 from conv_mixer import *
-from training_utils import train_batch, validate_batch, save_complete_model
+from training_utils import train_batch, validate_batch, save_complete_model, get_history_plots
 
 
 
@@ -87,7 +87,7 @@ cur = txn.cursor()
 with open(f'{model_dir}/config.yaml', 'w') as outfile:
     yaml.dump(args.__dict__, outfile, default_flow_style=False)
 
-writer.text(args.__dict__)
+writer.add_hparams(args.__dict__)
 
 val_ds = BenDataset(VAL_CSV_FILE, BEN_LMDB_PATH, args.ds_size)
 train_ds = BenDataset(TRAIN_CSV_FILE, BEN_LMDB_PATH, args.ds_size)
@@ -154,7 +154,7 @@ for e in range(args.epochs):
     except KeyboardInterrupt:
         print('\n\nAbort training.')
         break
-    
+
 
 print('Finished Training')
 if args.save_training:
@@ -162,6 +162,6 @@ if args.save_training:
     p = f'{model_dir}/{model_name}.pt'
     save_complete_model(p, model)
 
-
+writer.add_figure("Loss / Acc plots", get_history_plots())
 writer.close()
 

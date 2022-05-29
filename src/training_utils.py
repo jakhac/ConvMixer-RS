@@ -1,6 +1,7 @@
 import torch
 from sklearn.metrics import accuracy_score
 from torchmetrics.functional import accuracy
+import matplotlib.pyplot as plt
 
 
 def train_batch(train_loader, model, optimizer, loss_fn):
@@ -175,3 +176,24 @@ def get_accuracy_for_batch(y_true, y_pred):
     assert y_true.shape == y_pred.shape
     
     return accuracy(y_pred, y_true, subset_accuracy=True)
+
+
+def get_history_plots(val_loss_hist, train_loss_hist, val_acc_hist, train_acc_hist):
+    fig = plt.figure(figsize=(16,4))
+    ax = fig.add_subplot(121)
+    ax.plot(val_loss_hist, label='val')
+    ax.plot(train_loss_hist, label='train')
+    ax.legend(loc="upper right")
+    # ax.set_ylim([0, 1])
+    ax.set_title("loss")
+    ax.set_xlabel("epochs")
+
+    ax = fig.add_subplot(122)
+    ax.plot([v.cpu().detach().numpy() for v in val_acc_hist], label='val')
+    ax.plot([v.cpu().detach().numpy() for v in train_acc_hist], label='train')
+    ax.legend(loc="lower right")
+    ax.set_ylim([0, 1])
+    ax.set_title("accuracy")
+    ax.set_xlabel("epochs")
+    
+    return fig
