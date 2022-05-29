@@ -68,7 +68,7 @@ def main():
     args = parser.parse_args()
 
     # World size = total #gpus
-    args.world_size = args.ngpus_per_node * args.nodes
+    args.world_size = args.ngpus * args.nodes
     print("World size", args.world_size)
     
     # os.environ['MASTER_ADDR'] = 'localhost'
@@ -115,7 +115,7 @@ def main():
     
     print(args.__dict__)
     print("Spawn")
-    mp.spawn(train, nprocs=args.ngpus_per_node, args=(args,))
+    mp.spawn(train, nprocs=args.ngpus, args=(args,))
 
 
 
