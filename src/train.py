@@ -22,6 +22,7 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
+import torch.nn.DataParallel as DP
 
 from dataset_class import *
 from conv_mixer import *
@@ -76,8 +77,7 @@ model_name = f'ConvMx-{args.h}-{args.depth}'
 model_dir = PATH_TO_MODELS + '/' + timestamp + '-' + model_name
 
 # Store all model specific files in {model_dir}
-assert not os.path.isdir(model_dir)
-os.mkdir(model_dir)
+os.makedirs(model_dir, exist_ok=True)
 
 env = lmdb.open(BEN_LMDB_PATH, readonly=True, readahead=False, lock=False)
 txn = env.begin()
@@ -87,6 +87,8 @@ cur = txn.cursor()
 with open(f'{model_dir}/config.yaml', 'w') as outfile:
     yaml.dump(args.__dict__, outfile, default_flow_style=False)
 
+writer.text(args.__dict__)
+
 val_ds = BenDataset(VAL_CSV_FILE, BEN_LMDB_PATH, args.ds_size)
 train_ds = BenDataset(TRAIN_CSV_FILE, BEN_LMDB_PATH, args.ds_size)
 
@@ -95,8 +97,8 @@ train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
 
 
 #### Training Preparation ####
-model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size, 
-                  patch_size=args.p_size, n_classes=19)
+model = DP(ConvMixer(10, args.h, args.depth, kernel_size=args.k_size, 
+                  patch_size=args.p_size, n_classes=19))
 loss_fn = nn.BCEWithLogitsLoss()
 optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
 
@@ -162,26 +164,4 @@ if args.save_training:
 
 
 writer.close()
-
-#### Save Training History ####
-if args.save_training:
-    fig = plt.figure(figsize=(16,4))
-    ax = fig.add_subplot(121)
-    ax.plot(val_loss_hist, label='val')
-    ax.plot(train_loss_hist, label='train')
-    ax.legend(loc="upper right")
-    # ax.set_ylim([0, 1])
-    ax.set_title("loss")
-    ax.set_xlabel("epochs")
-
-    ax = fig.add_subplot(122)
-    ax.plot([v.cpu().detach().numpy() for v in val_acc_hist], label='val')
-    ax.plot([v.cpu().detach().numpy() for v in train_acc_hist], label='train')
-    ax.legend(loc="lower right")
-    ax.set_ylim([0, 1])
-    ax.set_title("accuracy")
-    ax.set_xlabel("epochs")
-
-    plt.savefig(f'{model_dir}/{model_name}.pdf')
-
 
