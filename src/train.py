@@ -40,12 +40,13 @@ def main():
     parser = argparse.ArgumentParser(description="ConvMixer Parameters")
 
     # HPC Parametes
-    parser.add_argument('--nodes', default=1, type=int, metavar='N',
-                        help='number of nodes')
-    parser.add_argument('--ngpus_per_node', default=1, type=int,
+    parser.add_argument('--nodes', default=1, type=int)
+    parser.add_argument('--local_ranks', default=0, type=int,
+                        help="Node's order number in [0, num_of_nodes-1]")
+    # parser.add_argument('--ip_adress', type=str, required=True,
+    #                     help='ip address of the host node')
+    parser.add_argument('--ngpus', default=1, type=int,
                         help='number of gpus per node')
-    parser.add_argument('-nr', '--nr', default=0, type=int,
-                        help='ranking within the nodes')
     
 
     # Training parameters
@@ -73,6 +74,7 @@ def main():
     # os.environ['MASTER_ADDR'] = 'localhost'
     # os.environ['MASTER_ADDR'] = os.environ['SLURM_LAUNCH_NODE_IPADDR']
     os.environ['MASTER_PORT'] = '8080'
+    os.environ['WORLD_SIZE'] = str(args.world_size)
     print('Masteraddr', os.environ['MASTER_ADDR'])
 
     # Get and assert paths
@@ -119,48 +121,53 @@ def main():
 
 def train(gpu, args):
     
-    print("train on", gpu)
+    args.gpu = gpu
+    print('args.gpu:', args.gpu)
+    print('train on gpu:', gpu)
     
-    rank = args.nr * args.ngpus_per_node + gpu
+    # rank = args.local_ranks * args.ngpus + gpu
+    rank = int(os.environ.get("SLURM_NODEID")) * args.ngpus + gpu
+    print("Rank", rank)
     dist.init_process_group(backend='nccl', init_method='env://', 
                             world_size=args.world_size, rank=rank)
 
+    torch.manual_seed(0)
+    # if gpu == 0:
+    #     writer = SummaryWriter()
 
-    if gpu == 0:
-        writer = SummaryWriter()
-
-    # Model prep    
-    model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size,
-                      patch_size=args.p_size, n_classes=19)
-    loss_fn = nn.BCEWithLogitsLoss().cuda(gpu)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
-    scheduler = ReduceLROnPlateau(optimizer, 'min')
 
     # if torch.cuda.is_available():
-    torch.cuda.set_device(gpu)
-    model.cuda(gpu)
-    model = nn.parallel.DistributedDataParallel(model, device_ids=[gpu])
+    torch.cuda.set_device(args.gpu)
+
 
     # Dataloader prep
-    # TODO: Add WeightedSampler to reduce overfit?
     train_ds = BenDataset(args.train_csv_file, args.ben_lmdb_path, args.ds_size)
-    val_ds = BenDataset(args.val_csv_file, args.ben_lmdb_path, args.ds_size)
-    
     train_sampler = DistributedSampler(train_ds, num_replicas=args.world_size, rank=rank)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size,
                               shuffle=False, sampler=train_sampler)
     
-    val_sampler = DistributedSampler(val_ds, num_replicas=args.world_size, rank=rank)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size,
-                            shuffle=False, sampler=val_sampler)
+    # val_ds = BenDataset(args.val_csv_file, args.ben_lmdb_path, args.ds_size)
+    # val_sampler = DistributedSampler(val_ds, num_replicas=args.world_size, rank=rank)
+    # val_loader = DataLoader(val_ds, batch_size=args.batch_size,
+    #                         shuffle=False, sampler=val_sampler)
 
 
-    val_loss_min = np.inf
+    # Model prep    
+    model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size,
+                      patch_size=args.p_size, n_classes=19).cuda(args.gpu)
+    loss_fn = nn.BCEWithLogitsLoss().cuda(args.gpu)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+    # scheduler = ReduceLROnPlateau(optimizer, 'min')
+
+    model = nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+
+
+    # val_loss_min = np.inf
 
     train_loss_hist = []
     train_acc_hist = []
-    val_loss_hist = []
-    val_acc_hist = []
+    # val_loss_hist = []
+    # val_acc_hist = []
 
     # Main training loop
     print('Start main training loop.')
@@ -170,49 +177,49 @@ def train(gpu, args):
 
         # Inference, backpropagation, weight adjustments
         model.train()
-        train_loss, train_acc = train_batch(val_loader, model, optimizer, 
-                                            loss_fn, gpu)
+        train_loss, train_acc = train_batch(train_loader, model, optimizer, 
+                                            loss_fn, args.gpu)
         train_loss_hist.append(train_loss)
         train_acc_hist.append(train_acc)
             
         
-        # Evaluate on validation data
-        model.eval()
-        val_loss, val_acc = validate_batch(train_loader, model,
-                                        loss_fn, gpu)
-        val_loss_hist.append(val_loss)
-        val_acc_hist.append(val_acc)
+        # # Evaluate on validation data
+        # model.eval()
+        # val_loss, val_acc = validate_batch(val_loader, model,
+        #                                 loss_fn, gpu)
+        # val_loss_hist.append(val_loss)
+        # val_acc_hist.append(val_acc)
 
-        if gpu == 0:
-            print(f'train_loss={train_loss:.4f} train_acc={train_acc:.4f}', end=" ")
-            print(f'val_loss={val_loss:.4f} val_acc={val_acc:.4f}')
+        if args.gpu == 0:
+            print(f'train_loss={train_loss:.4f} train_acc={train_acc:.4f}')
+            # print(f'val_loss={val_loss:.4f} val_acc={val_acc:.4f}')
         
-            writer.add_scalar("train_loss", train_loss, e)
-            writer.add_scalar("val_loss", val_loss, e)
-            writer.add_scalar("train_acc", train_acc, e)
-            writer.add_scalar("val_acc", val_acc, e)
+        #     writer.add_scalar("train_loss", train_loss, e)
+        #     writer.add_scalar("val_loss", val_loss, e)
+        #     writer.add_scalar("train_acc", train_acc, e)
+        #     writer.add_scalar("val_acc", val_acc, e)
         
-        scheduler.step(val_loss)
+        # scheduler.step(val_loss)
         
-        # Save checkpoint model if validation loss improves
-        if args.save_training and val_loss < val_loss_min:
-            print(f'val_loss decreased ({val_loss_min:.6f} --> {val_loss:.6f}). Saving model weights ...')
+        # # Save checkpoint model if validation loss improves
+        # if args.save_training and val_loss < val_loss_min:
+        #     print(f'val_loss decreased ({val_loss_min:.6f} --> {val_loss:.6f}). Saving model weights ...')
 
-            p = f'{args.model_dir}/e{e+1}_{args.model_name}.pt'
-            save_complete_model(p, model)
+        #     p = f'{args.model_dir}/e{e+1}_{args.model_name}.pt'
+        #     save_complete_model(p, model)
             
-            val_loss_min = val_loss
+        #     val_loss_min = val_loss
 
         
 
     if gpu == 0:
         print('Finished Training')
-        if args.save_training:
-            print('Saving final model ...')
-            p = f'{args.model_dir}/{args.model_name}.pt'
-            save_complete_model(p, model)
+        # if args.save_training:
+        #     print('Saving final model ...')
+        #     p = f'{args.model_dir}/{args.model_name}.pt'
+        #     save_complete_model(p, model)
             
-        writer.close()
+        # writer.close()
 
 
 if __name__ == '__main__':
