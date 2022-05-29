@@ -4,16 +4,14 @@ from torchmetrics.functional import accuracy
 import matplotlib.pyplot as plt
 
 
-def train_batch(train_loader, model, optimizer, loss_fn):
+def train_batch(train_loader, model, optimizer, loss_fn, dev):
     """Perform a full training step for given batches in train_loader.
-
     Args:
         train_loader (DataLoader): data loader with training images
         model (Model): model
         optimizer (optimizer): optimizer
         loss_fn (criterion): loss function
         accuracy (accuracy): accuracy object
-
     Returns:
         (float, float): (loss, accuracy) for this data_loader
     """
@@ -27,7 +25,7 @@ def train_batch(train_loader, model, optimizer, loss_fn):
 
         # Transfer to GPU if available
         if torch.cuda.is_available():
-            X, y = X.cuda(), y.cuda()
+            X, y = X.to(dev), y.to(dev)
         
         # Clear gradients and pass data through network
         optimizer.zero_grad()
@@ -52,15 +50,13 @@ def train_batch(train_loader, model, optimizer, loss_fn):
     return train_loss, train_acc
 
 
-def validate_batch(val_loader, model, loss_fn):
+def validate_batch(val_loader, model, loss_fn, dev):
     """Perform validation on val_loader images.
-
     Args:
         val_loader (DataLoader): data loader with validation data
         model (Model): model
         loss_fn (criterion): loss function
         accuracy (accuracy): accuracy object
-
     Returns:
         (float, float): (loss, accuracy) for data loader
     """
@@ -77,7 +73,7 @@ def validate_batch(val_loader, model, loss_fn):
             
             # Transfer to GPU if available
             if torch.cuda.is_available():
-                X, y = X.cuda(), y.cuda()
+                X, y = X.to(dev), y.to(dev)
         
             outputs = model(X)
             
@@ -99,7 +95,6 @@ def validate_batch(val_loader, model, loss_fn):
 def save_general_checkpoint(path, epoch, model, optimizer, val_loss):
     """Save a general checkpoint for either inference/further training.
     Loading this checkpoint requires the model's architecture beforehand.
-
     Args:
         path (string): path/to/checkpoint-file.ckpt
         epoch (int): epoch
@@ -121,10 +116,8 @@ def save_general_checkpoint(path, epoch, model, optimizer, val_loss):
 def load_general_checkpoint(path):
     """Load a general checkpoint and return its dictionary.
     For usage see https://pytorch.org/tutorials/beginner/saving_loading_models.html#save
-
     Args:
         path (string): path/to/checkpoint-file.ckpt
-
     Returns:
         dict: state dictionary
     """
@@ -134,7 +127,6 @@ def load_general_checkpoint(path):
 
 def save_complete_model(path, model):
     """Save a complete model. Loading does not require architecture beforehand.add()
-
     Args:
         path (string): path/to/model-file.pt
         model (Model): model to save
@@ -144,10 +136,8 @@ def save_complete_model(path, model):
     
 def load_complete_model(path):
     """Load complete model from path.add()
-
     Args:
         path (string): path/to/model-file.pt
-
     Returns:
         Model: complete model
     """
@@ -161,7 +151,6 @@ def get_predictions_for_batch(outputs):
     
     Args:
         outputs (Tensor): batch of outputs by model
-
     Returns:
         (Tensor): transformed tensor with one-hot predictions
     """
