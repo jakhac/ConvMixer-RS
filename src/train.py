@@ -98,8 +98,8 @@ def main():
     model_name = f'ConvMx-{args.h}-{args.depth}'
     model_dir = PATH_TO_MODELS + '/' + timestamp + '-' + model_name
 
-    assert not os.path.isdir(model_dir)
-    os.mkdir(model_dir) # Store all model specific files here
+    # assert not os.path.isdir(model_dir)
+    os.makedirs(model_dir, exist_ok=True)
     
     args.model_name = model_name
     args.model_dir = model_dir
