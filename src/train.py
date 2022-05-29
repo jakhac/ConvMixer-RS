@@ -24,6 +24,7 @@ import torch.nn as nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DistributedSampler
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
@@ -70,7 +71,7 @@ def main():
     print("World size", args.world_size)
     
     # os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_ADDR'] = os.environ['SLURM_LAUNCH_NODE_IPADDR']
+    # os.environ['MASTER_ADDR'] = os.environ['SLURM_LAUNCH_NODE_IPADDR']
     os.environ['MASTER_PORT'] = '8080'
     print('Masteraddr', os.environ['MASTER_ADDR'])
 
@@ -128,11 +129,11 @@ def train(gpu, args):
         writer = SummaryWriter()
 
     # Model prep    
+    model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size,
+                      patch_size=args.p_size, n_classes=19)
     loss_fn = nn.BCEWithLogitsLoss().cuda(gpu)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     scheduler = ReduceLROnPlateau(optimizer, 'min')
-    model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size,
-                      patch_size=args.p_size, n_classes=19)
 
     # if torch.cuda.is_available():
     torch.cuda.set_device(gpu)
@@ -144,11 +145,11 @@ def train(gpu, args):
     train_ds = BenDataset(args.train_csv_file, args.ben_lmdb_path, args.ds_size)
     val_ds = BenDataset(args.val_csv_file, args.ben_lmdb_path, args.ds_size)
     
-    train_sampler = dist.DistributedSampler(train_ds, num_replicas=args.world_size, rank=rank)
+    train_sampler = DistributedSampler(train_ds, num_replicas=args.world_size, rank=rank)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size,
                               shuffle=True, sampler=train_sampler)
     
-    val_sampler = dist.DistributedSampler(val_ds, num_replicas=args.world_size, rank=rank)
+    val_sampler = DistributedSampler(val_ds, num_replicas=args.world_size, rank=rank)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size,
                             shuffle=True, sampler=val_sampler)
 
