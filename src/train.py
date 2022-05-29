@@ -43,8 +43,6 @@ def main():
     parser.add_argument('--nodes', default=1, type=int)
     parser.add_argument('--local_ranks', default=0, type=int,
                         help="Node's order number in [0, num_of_nodes-1]")
-    # parser.add_argument('--ip_adress', type=str, required=True,
-    #                     help='ip address of the host node')
     parser.add_argument('--ngpus', default=1, type=int,
                         help='number of gpus per node')
     
@@ -71,9 +69,7 @@ def main():
     args.world_size = args.ngpus * args.nodes
     print("World size", args.world_size)
     
-    # os.environ['MASTER_ADDR'] = 'localhost'
-    # os.environ['MASTER_ADDR'] = os.environ['SLURM_LAUNCH_NODE_IPADDR']
-    os.environ['MASTER_PORT'] = find_free_port()
+    os.environ['MASTER_PORT'] = str(find_free_port())
     os.environ['WORLD_SIZE'] = str(args.world_size)
     print('Masteraddr', os.environ['MASTER_ADDR'])
 
@@ -83,7 +79,6 @@ def main():
     TRAIN_CSV_FILE = os.environ.get("TRAIN_CSV")
     VAL_CSV_FILE = os.environ.get("VAL_CSV")
     PATH_TO_MODELS = os.environ.get("PATH_TO_MODELS")
-    # TEST_CSV_FILE = os.environ.get("TEST_CSV")
 
     assert os.path.isdir(BEN_LMDB_PATH)
     assert os.path.isfile(TRAIN_CSV_FILE)
@@ -97,37 +92,26 @@ def main():
     timestamp = datetime.now().strftime('%m-%d_%H%M')
     model_name = f'ConvMx-{args.h}-{args.depth}'
     model_dir = PATH_TO_MODELS + '/' + timestamp + '-' + model_name
-
-    # assert not os.path.isdir(model_dir)
     os.makedirs(model_dir, exist_ok=True)
     
     args.model_name = model_name
     args.model_dir = model_dir
 
-
-    # Decide which gpu and if distributed is feasible
-    args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
     # Dump arguments into yaml file
     with open(f'{args.model_dir}/config.yaml', 'w') as outfile:
         yaml.dump(args.__dict__, outfile, default_flow_style=False)
     
     
-    print(args.__dict__)
-    print("Spawn")
+    print("Spawn {args.ngpus} training()-processes.")
     mp.spawn(train, nprocs=args.ngpus, args=(args,))
-
 
 
 def train(gpu, args):
     
     args.gpu = gpu
-    print('args.gpu:', args.gpu)
-    print('train on gpu:', gpu)
-    
-    # rank = args.local_ranks * args.ngpus + gpu
     rank = int(os.environ.get("SLURM_NODEID")) * args.ngpus + gpu
-    print("Rank", rank)
+    
+    print(f'Start training on cuda:{args.gpu} and rank {rank}')
     dist.init_process_group(backend='nccl', init_method='env://', 
                             world_size=args.world_size, rank=rank)
 
@@ -152,33 +136,33 @@ def train(gpu, args):
     #                         shuffle=False, sampler=val_sampler)
 
 
-    # Model prep    
+    # Model prep
+    # TODO maybe use sync-batchnorm
     model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size,
                       patch_size=args.p_size, n_classes=19).cuda(args.gpu)
     loss_fn = nn.BCEWithLogitsLoss().cuda(args.gpu)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
-    # scheduler = ReduceLROnPlateau(optimizer, 'min')
 
     model = nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
 
 
-    # val_loss_min = np.inf
-
+    val_loss_min = np.inf
     train_loss_hist = []
     train_acc_hist = []
-    # val_loss_hist = []
-    # val_acc_hist = []
+    val_loss_hist = []
+    val_acc_hist = []
 
     # Main training loop
-    print('Start main training loop.')
+    print('Start main loop.')
     for e in range(args.epochs):
 
-        print(f'\nEpoch{e+1:3d}/{args.epochs:3d}')
+        print(f'\n{args.gpu} Epoch {e+1:3d}/{args.epochs:3d}')
 
         # Inference, backpropagation, weight adjustments
         model.train()
         train_loss, train_acc = train_batch(train_loader, model, optimizer, 
-                                            loss_fn, args.gpu)
+                                            loss_fn, args.gpu, drop_last=True)
+        
         train_loss_hist.append(train_loss)
         train_acc_hist.append(train_acc)
             
@@ -186,20 +170,18 @@ def train(gpu, args):
         # # Evaluate on validation data
         # model.eval()
         # val_loss, val_acc = validate_batch(val_loader, model,
-        #                                 loss_fn, gpu)
+        #                                 loss_fn, gpu, drop_last=True)
         # val_loss_hist.append(val_loss)
         # val_acc_hist.append(val_acc)
 
-        if args.gpu == 0:
-            print(f'train_loss={train_loss:.4f} train_acc={train_acc:.4f}')
+        # if args.gpu == 0:
+        print(f'{args.gpu} train_loss={train_loss:.4f} train_acc={train_acc:.4f}')
             # print(f'val_loss={val_loss:.4f} val_acc={val_acc:.4f}')
         
         #     writer.add_scalar("train_loss", train_loss, e)
         #     writer.add_scalar("val_loss", val_loss, e)
         #     writer.add_scalar("train_acc", train_acc, e)
         #     writer.add_scalar("val_acc", val_acc, e)
-        
-        # scheduler.step(val_loss)
         
         # # Save checkpoint model if validation loss improves
         # if args.save_training and val_loss < val_loss_min:
