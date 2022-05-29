@@ -65,15 +65,15 @@ BEN_LMDB_PATH = os.environ.get("BEN_LMDB_PATH")
 TRAIN_CSV_FILE = os.environ.get("TRAIN_CSV")
 TEST_CSV_FILE = os.environ.get("TEST_CSV")
 VAL_CSV_FILE = os.environ.get("VAL_CSV")
-PATH_TO_MODELS = os.environ.get("PATH_TO_MODELS")
+PATH_TO_RUNS = os.environ.get("PATH_TO_RUNS")
 
 assert os.path.isdir(BEN_LMDB_PATH)
 assert os.path.isfile(TRAIN_CSV_FILE)
-assert os.path.isdir(PATH_TO_MODELS)
+assert os.path.isdir(PATH_TO_RUNS)
 
 timestamp = datetime.now().strftime('%m-%d_%H%M_%S')
 model_name = f'ConvMx-{args.h}-{args.depth}-{args.k_size}-{args.p_size}'
-model_type_dir = PATH_TO_MODELS + '/' + model_name
+model_type_dir = PATH_TO_RUNS + '/' + model_name
 model_dir = model_type_dir + '/' + timestamp
 
 # Store all model specific files in {model_dir}
@@ -138,10 +138,10 @@ for e in range(args.epochs):
     print(f'train_loss={train_loss:.4f} train_acc={train_acc:.4f}', end=" ")
     print(f'val_loss={val_loss:.4f} val_acc={val_acc:.4f}')
     
-    writer.add_scalar("train_loss", train_loss, e)
-    writer.add_scalar("val_loss", val_loss, e)
-    writer.add_scalar("train_acc", train_acc, e)
-    writer.add_scalar("val_acc", val_acc, e)
+    writer.add_scalar("Loss/train", train_loss, e)
+    writer.add_scalar("Loss/val", val_loss, e)
+    writer.add_scalar("Acc/train", train_acc, e)
+    writer.add_scalar("Acc/val", val_acc, e)
     
     # Save checkpoint model if validation loss improves
     if args.save_training and val_loss < val_loss_min:
@@ -165,8 +165,6 @@ if args.save_training:
 writer.add_figure("Loss / Acc plots", get_history_plots(val_loss_hist, train_loss_hist,
                                                         val_acc_hist, train_acc_hist))
 
-
-
-writer.add_hparams(args.__dict__, {'metric':0.0})
+writer.add_hparams(args.__dict__, {'0':0.0})
 writer.close()
 
