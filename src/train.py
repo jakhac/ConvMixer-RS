@@ -30,7 +30,6 @@ from training_utils import train_batch, validate_batch, save_complete_model, get
 
 
 
-
 ### CONFIG ###
 
 parser = argparse.ArgumentParser(description="ConvMixer Parameters")
@@ -41,6 +40,8 @@ parser.add_argument('--batch_size', type=int, default=256)
 parser.add_argument('--ds_size', type=int, default=None)
 parser.add_argument('--momentum', type=float, default=0.9)
 parser.add_argument('--lr', type=float, default=0.01)
+parser.add_argument('--optimizer', type=str, default='SGD')
+parser.add_argument('--activation', type=str, default='GELU')
 
 
 parser.add_argument('--save_training', default=True,
@@ -51,15 +52,12 @@ parser.add_argument('--h', type=int, default=512)
 parser.add_argument('--depth', type=int, default=8)
 parser.add_argument('--k_size', type=int, default=9)
 parser.add_argument('--p_size', type=int, default=7)
+parser.add_argument('--k_dilation', type=int, default=1)
 
 args = parser.parse_args()
 
 
 #### Data Loading ####
-
-writer = SummaryWriter()
-
-# Get paths
 load_dotenv('../.env')
 
 BEN_LMDB_PATH = os.environ.get("BEN_LMDB_PATH")
@@ -73,9 +71,10 @@ assert os.path.isdir(BEN_LMDB_PATH)
 assert os.path.isfile(TRAIN_CSV_FILE)
 assert os.path.isdir(PATH_TO_MODELS)
 
-timestamp = datetime.now().strftime('%m-%d_%H%M')
-model_name = f'ConvMx-{args.h}-{args.depth}'
-model_dir = PATH_TO_MODELS + '/' + timestamp + '-' + model_name
+timestamp = datetime.now().strftime('%m-%d_%H%M_%S')
+model_name = f'ConvMx-{args.h}-{args.depth}-{args.k_size}-{args.p_size}'
+model_type_dir = PATH_TO_MODELS + '/' + model_name
+model_dir = model_type_dir + '/' + timestamp
 
 # Store all model specific files in {model_dir}
 os.makedirs(model_dir, exist_ok=True)
@@ -88,7 +87,7 @@ cur = txn.cursor()
 with open(f'{model_dir}/config.yaml', 'w') as outfile:
     yaml.dump(args.__dict__, outfile, default_flow_style=False)
 
-writer.add_hparams(args.__dict__, {})
+writer = SummaryWriter(log_dir=model_dir)
 
 val_ds = BenDataset(VAL_CSV_FILE, BEN_LMDB_PATH, args.ds_size)
 train_ds = BenDataset(TRAIN_CSV_FILE, BEN_LMDB_PATH, args.ds_size)
@@ -105,6 +104,8 @@ model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size,
 loss_fn = nn.BCEWithLogitsLoss().to(dev)
 optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
 
+args.n_params = sum(p.numel() for p in model.parameters())
+args.n_params_trainable = sum(p.numel() for p in model.parameters())
 
 #### Training ####
 val_loss_min = np.inf
@@ -150,6 +151,7 @@ for e in range(args.epochs):
         save_complete_model(p, model)
         
         val_loss_min = val_loss
+        args.val_loss_min = val_loss_min
 
 
 
@@ -159,7 +161,12 @@ if args.save_training:
     p = f'{model_dir}/{model_name}.pt'
     save_complete_model(p, model)
 
+
 writer.add_figure("Loss / Acc plots", get_history_plots(val_loss_hist, train_loss_hist,
                                                         val_acc_hist, train_acc_hist))
+
+
+
+writer.add_hparams(args.__dict__, {'metric':0.0})
 writer.close()
 
