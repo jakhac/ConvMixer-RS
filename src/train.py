@@ -73,7 +73,7 @@ def main():
     
     # os.environ['MASTER_ADDR'] = 'localhost'
     # os.environ['MASTER_ADDR'] = os.environ['SLURM_LAUNCH_NODE_IPADDR']
-    os.environ['MASTER_PORT'] = '8080'
+    os.environ['MASTER_PORT'] = find_free_port()
     os.environ['WORLD_SIZE'] = str(args.world_size)
     print('Masteraddr', os.environ['MASTER_ADDR'])
 
@@ -220,6 +220,17 @@ def train(gpu, args):
         #     save_complete_model(p, model)
             
         # writer.close()
+
+
+import socket
+from contextlib import closing
+
+def find_free_port():
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+        s.bind(('', 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return s.getsockname()[1]
+    
 
 
 if __name__ == '__main__':
