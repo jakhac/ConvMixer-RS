@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH -o /scratch/jakhac/ConvMixer/myjob.%j.%N.out   # Output-File
+#SBATCH -o /scratch/jakhac/ConvMixer/r%j.%N.out   # Output-File
 #SBATCH -D /scratch/jakhac/ConvMixer/ConvMixer-RS/src/    # Working Directory
 #SBATCH --ntasks=2 		# Anzahl Prozesse P (CPU-Cores) 
 #SBATCH --cpus-per-task=1	# Anzahl CPU-Cores pro Prozess P
@@ -23,6 +23,4 @@ conda activate pytest102
 
 cd /scratch/jakhac/ConvMixer/ConvMixer-RS/src
 
-
-python3 train.py $1
-##python3 train.py --epochs=5 --batch_size=64 --lr=0.1 --h=128 --depth=2 --ds_size=200 --run_tests_n=3
+python3 train.py $0
