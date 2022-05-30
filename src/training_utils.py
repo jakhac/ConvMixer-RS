@@ -4,6 +4,9 @@ from torchmetrics.functional import accuracy
 import matplotlib.pyplot as plt
 from datetime import datetime
 
+import torch.optim as optim
+import torch.nn as nn
+
 
 def train_batches(train_loader, model, optimizer, loss_fn, dev):
     """Perform a full training step for given batches in train_loader.
@@ -94,40 +97,6 @@ def valid_batches(val_loader, model, loss_fn, dev):
     return val_loss, val_acc
 
 
-def save_general_checkpoint(path, epoch, model, optimizer, val_loss):
-    """Save a general checkpoint for either inference/further training.
-    Loading this checkpoint requires the model's architecture beforehand.
-    Args:
-        path (string): path/to/checkpoint-file.ckpt
-        epoch (int): epoch
-        model (Model): model
-        optimizer (optimizer): optimizer
-        val_loss (float): validation loss
-        device (string): cuda or cpu
-    """
-    
-    dict_state = {
-        'epoch': epoch,
-        'val_loss': val_loss,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-    }
-    
-    torch.save(dict_state, path)
-    
-    
-def load_general_checkpoint(path):
-    """Load a general checkpoint and return its dictionary.
-    For usage see https://pytorch.org/tutorials/beginner/saving_loading_models.html#save
-    Args:
-        path (string): path/to/checkpoint-file.ckpt
-    Returns:
-        dict: state dictionary
-    """
-    
-    return torch.load(path)
-
-
 def save_complete_model(path, model):
     """Save a complete model. Loading does not require architecture beforehand.add()
     Args:
@@ -137,6 +106,7 @@ def save_complete_model(path, model):
     
     torch.save(model, path)
     
+
 def load_complete_model(path):
     """Load complete model from path.add()
     Args:
@@ -207,3 +177,23 @@ def get_logging_dirs(args):
     model_name = timestamp + f'-batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}'
 
     return model_arch, model_name
+
+
+def get_optimizer(model, args):
+    if args.optimizer == 'SGD':
+        return optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+    elif args.optimizer == 'Adam':
+        return optim.Adam(model.parameters(), lr=args.lr)
+    else:
+        print("Error: get_optimizer() did not find a matching optimizer.")
+        assert False
+
+
+def get_activation(activation):
+    if activation == 'GELU':
+        return nn.GELU()
+    elif activation == 'ReLU':
+        return nn.ReLU()
+    else:
+        print("Error: get_activation() did not find a matching activation fn.")
+        assert False

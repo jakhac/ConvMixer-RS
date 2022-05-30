@@ -27,6 +27,6 @@ echo "Args:"
 echo $1
 
 echo ""
-echo "Execute train.py"
+echo "Start execution of train.py"
 
 python3 train.py $1

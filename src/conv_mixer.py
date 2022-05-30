@@ -1,22 +1,25 @@
 import torch.nn as nn
+from training_utils import get_activation
 
     
 class ConvMixerLayer(nn.Module):
     
-    def __init__(self, h, kernel_size=9):
+    def __init__(self, h, kernel_size=9, activation='GELU'):
         super().__init__()
         
         # Depthwise convolution layer
         self.depthwise_conv = nn.Sequential(
             nn.Conv2d(h, h, kernel_size=kernel_size, groups=h, padding='same'),
-            nn.GELU(),
+            # nn.GELU(),
+            get_activation(activation),
             nn.BatchNorm2d(h)
         )
         
         # Pointwise convolution layer
         self.pointwise_conv = nn.Sequential(
             nn.Conv2d(h, h, kernel_size=1),
-            nn.GELU(),
+            # nn.GELU(),
+            get_activation(activation),
             nn.BatchNorm2d(h)
         )
         
@@ -30,20 +33,24 @@ class ConvMixerLayer(nn.Module):
 
 class ConvMixer(nn.Module):
     
-    def __init__(self, input_dim, h, depth, kernel_size=9, patch_size=7, n_classes=19):
+    def __init__(self, input_dim, h, depth, kernel_size=9, patch_size=7,
+                 n_classes=19, activation='GELU'):
         super().__init__()
         
         # Patch embeddings as convolutions
         self.patch_embedding = nn.Sequential(
             nn.Conv2d(input_dim, h, kernel_size=patch_size, stride=patch_size),
-            nn.GELU(),
+            # nn.GELU(),
+            get_activation(activation),
             nn.BatchNorm2d(h)
         )
         
         # Add depth-many ConvMixerLayer blocks
         self.ConvMixerLayers = nn.ModuleList([])
         for _ in range(depth):
-            self.ConvMixerLayers.append(ConvMixerLayer(h=h, kernel_size=kernel_size))
+            self.ConvMixerLayers.append(
+                ConvMixerLayer(h=h, kernel_size=kernel_size, activation=activation)
+            )
 
         # Unroll patches and add classification layer
         self.head = nn.Sequential(

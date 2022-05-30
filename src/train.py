@@ -27,7 +27,7 @@ from torch.nn import DataParallel as DP
 
 from dataset_class import *
 from conv_mixer import *
-from training_utils import get_logging_dirs, load_complete_model, train_batches, valid_batches, save_complete_model, get_history_plots
+from training_utils import get_activation, get_logging_dirs, get_optimizer, load_complete_model, train_batches, valid_batches, save_complete_model, get_history_plots
 
 
 def main():
@@ -41,14 +41,16 @@ def main():
     args.VALID_CSV_FILE = os.environ.get("VAL_CSV")
     args.TEST_CSV_FILE = os.environ.get("TEST_CSV")
     args.PATH_TO_RUNS = os.environ.get("PATH_TO_RUNS")
+    args.SPLIT = os.environ.get("SPLIT")
 
     assert os.path.isdir(args.BEN_LMDB_PATH)
     assert os.path.isfile(args.TRAIN_CSV_FILE)
     assert os.path.isfile(args.VALID_CSV_FILE)
     assert os.path.isdir(args.PATH_TO_RUNS)
 
+    args.SPLIT = 'test' if args.test_run else args.SPLIT
     model_arch, model_name = get_logging_dirs(args)
-    args.model_arch_dir = args.PATH_TO_RUNS + '/' + model_arch
+    args.model_arch_dir = args.PATH_TO_RUNS + '/' + args.SPLIT + '/' + model_arch
     args.model_name_dir = args.model_arch_dir + '/' + model_name
     args.model_ckpt_dir = args.model_name_dir + '/ckpt'
     print('model_arch_dir', args.model_arch_dir)
@@ -77,10 +79,15 @@ def main():
 def run_training(args, writer, dev):
 
     model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size, 
-                      patch_size=args.p_size, n_classes=19)
+                      patch_size=args.p_size, n_classes=19, 
+                      activation=args.activation)
+
+    if torch.cuda.is_available():
+        model = model.to(dev)
+        model = DP(model)
 
     loss_fn = nn.BCEWithLogitsLoss().to(dev)
-    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+    optimizer = get_optimizer(model, args)
 
     args.n_params = sum(p.numel() for p in model.parameters())
     args.n_params_trainable = sum(p.numel() for p in model.parameters())
@@ -93,15 +100,10 @@ def run_training(args, writer, dev):
 
     #### Training ####
     val_loss_min = np.inf
-
     train_loss_hist = []
-    train_acc_hist = []
     valid_loss_hist = []
     valid_acc_hist = []
-
-    if torch.cuda.is_available():
-        model = model.to(dev)
-        model = DP(model)
+    train_acc_hist = []
 
     # Main training loop
     print('Start main training loop.')
@@ -200,8 +202,9 @@ def _parse_args():
     parser.add_argument('--optimizer', type=str, default='SGD')
     parser.add_argument('--activation', type=str, default='GELU')
 
-
     # Config Parameters
+    parser.add_argument('--test_run', default=False,
+                        help='log into run/test directory')
     parser.add_argument('--save_training', default=True,
                         help='save checkpoints when valid_loss decreases')
     parser.add_argument('--run_tests', type=bool, default=True,
