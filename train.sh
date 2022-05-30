@@ -1,7 +1,7 @@
 #!/bin/bash
 
-#SBATCH -o /scratch/jakhac/ConvMixer/r%j.%N.out   # Output-File
-#SBATCH -D /scratch/jakhac/ConvMixer/ConvMixer-RS/src/    # Working Directory
+#SBATCH -o /scratch/jakhac/ConvMixer/myjob.%j.%N.out   # Output-File
+#SBATCH -D /scratch/jakhac/ConvMixer/src/    # Working Directory
 #SBATCH --ntasks=2 		# Anzahl Prozesse P (CPU-Cores) 
 #SBATCH --cpus-per-task=1	# Anzahl CPU-Cores pro Prozess P
 #SBATCH --gres=gpu:tesla:2
@@ -21,6 +21,12 @@ module load nvidia/cuda/11.2
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate pytest102
 
-cd /scratch/jakhac/ConvMixer/ConvMixer-RS/src
+cd /scratch/jakhac/ConvMixer/src
 
-python3 train.py $0
+echo "Args:"
+echo $1
+
+echo ""
+echo "Execute train.py"
+
+python3 train.py $1
