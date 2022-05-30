@@ -2,9 +2,10 @@ import torch
 from sklearn.metrics import accuracy_score
 from torchmetrics.functional import accuracy
 import matplotlib.pyplot as plt
+from datetime import datetime
 
 
-def train_batch(train_loader, model, optimizer, loss_fn, dev):
+def train_batches(train_loader, model, optimizer, loss_fn, dev):
     """Perform a full training step for given batches in train_loader.
     Args:
         train_loader (DataLoader): data loader with training images
@@ -50,13 +51,14 @@ def train_batch(train_loader, model, optimizer, loss_fn, dev):
     return train_loss, train_acc
 
 
-def validate_batch(val_loader, model, loss_fn, dev):
+def valid_batches(val_loader, model, loss_fn, dev):
     """Perform validation on val_loader images.
     Args:
         val_loader (DataLoader): data loader with validation data
         model (Model): model
         loss_fn (criterion): loss function
         accuracy (accuracy): accuracy object
+        device (string): cuda or cpu
     Returns:
         (float, float): (loss, accuracy) for data loader
     """
@@ -101,6 +103,7 @@ def save_general_checkpoint(path, epoch, model, optimizer, val_loss):
         model (Model): model
         optimizer (optimizer): optimizer
         val_loss (float): validation loss
+        device (string): cuda or cpu
     """
     
     dict_state = {
@@ -186,3 +189,21 @@ def get_history_plots(val_loss_hist, train_loss_hist, val_acc_hist, train_acc_hi
     ax.set_xlabel("epochs")
     
     return fig
+
+
+def get_logging_dirs(args):
+    """Determine model-architecture directory (4 hyperparameters) and
+    the model name based on training (..) parameters
+
+    Args:
+        args (args): args
+
+    Returns:
+        (string, string): model_arch, model_name
+    """
+
+    timestamp = datetime.now().strftime('%m-%d_%H%M_%S')
+    model_arch = f'ConvMx-{args.h}-{args.depth}-{args.k_size}-{args.p_size}'
+    model_name = timestamp + f'-batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}'
+
+    return model_arch, model_name
