@@ -26,6 +26,8 @@ import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn import DataParallel as DP
 
+from pytorch_lightning.lite import LightningLite
+
 from dataset_class import *
 from conv_mixer import *
 from training_utils import get_logging_dirs, get_model_name, get_optimizer, load_complete_model, train_batches, valid_batches, save_complete_model, get_history_plots
@@ -72,10 +74,8 @@ def main():
     args.model_dir = f'{args.PATH_TO_RUNS}/{args.SPLIT}/{args.exp_name}/{args.model_name}'
     args.model_ckpt_dir = args.model_dir + '/ckpt'
 
-    os.makedirs(args.model_dir, exist_ok=False)
-    os.makedirs(args.model_ckpt_dir, exist_ok=False)
-
-    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    os.makedirs(args.model_dir, exist_ok=True)
+    os.makedirs(args.model_ckpt_dir, exist_ok=True)
 
     if args.dry_run:
         args.epochs = 5
@@ -90,93 +90,110 @@ def main():
         yaml.dump(args.__dict__, outfile, default_flow_style=False)
 
 
-    writer = SummaryWriter(log_dir=args.model_dir)
-    run_training(args, writer, dev)
-
-    if args.run_tests and args.run_tests_n > 0:
-        run_tests(args, writer, dev)
-
-    writer.close()
-
-
-def run_training(args, writer, dev):
-
-    model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size, 
-                      patch_size=args.p_size, n_classes=19, 
-                      activation=args.activation)
-
-    if torch.cuda.is_available():
-        model = model.to(dev)
-        model = DP(model)
-
-    loss_fn = nn.BCEWithLogitsLoss().to(dev)
-    optimizer = get_optimizer(model, args)
-
-    args.n_params = sum(p.numel() for p in model.parameters())
-    args.n_params_trainable = sum(p.numel() for p in model.parameters())
-
-    valid_ds = BenDataset(args.VALID_CSV_FILE, args.BEN_LMDB_PATH, args.ds_size)
-    train_ds = BenDataset(args.TRAIN_CSV_FILE, args.BEN_LMDB_PATH, args.ds_size)
-
-    valid_loader = DataLoader(valid_ds, batch_size=args.batch_size, shuffle=True)
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
-
-    #### Training ####
-    val_loss_min = np.inf
-    train_loss_hist = []
-    valid_loss_hist = []
-    valid_acc_hist = []
-    train_acc_hist = []
-
-    # Main training loop
-    print('Start main training loop.')
-    for e in range(args.epochs):
-
-        print(f'\n[{e+1:3d}/{args.epochs:3d}]', end=" ")
-
-        # Inference and 
-        model.train()
-        train_loss, train_acc = train_batches(train_loader, model, optimizer, loss_fn, dev)
-        train_loss_hist.append(train_loss)
-        train_acc_hist.append(train_acc)
-            
-        # Evaluate on validation data
-        model.eval()
-        valid_loss, valid_acc = valid_batches(valid_loader, model, loss_fn, dev)
-        valid_loss_hist.append(valid_loss)
-        valid_acc_hist.append(valid_acc)
-
-        print(f'train_loss={train_loss:.4f} train_acc={train_acc:.4f}', end=" ")
-        print(f'val_loss={valid_loss:.4f} val_acc={valid_acc:.4f}')
-        
-        writer.add_scalar("Loss/train", train_loss, e)
-        writer.add_scalar("Loss/valid", valid_loss, e)
-        writer.add_scalar("Acc/train", train_acc, e)
-        writer.add_scalar("Acc/valid", valid_acc, e)
-        
-        # Save checkpoint model if validation loss improves
-        if args.save_training and valid_loss < val_loss_min:
-            print(f'\tval_loss decreased ({val_loss_min:.6f} --> {valid_loss:.6f}). Saving this model ...')
-
-            p = f'{args.model_ckpt_dir}/{e+1}.pt'
-            save_complete_model(p, model)
-            
-            val_loss_min = valid_loss
-
-
-    print('Finished Training')
-    if args.save_training:
-        print('Saving final model ...')
-        p = f'{args.model_ckpt_dir}/{args.epochs}.pt'
-        save_complete_model(p, model)
-
-
-    writer.add_figure("matplotlib", get_history_plots(
-        valid_loss_hist, train_loss_hist,
-        valid_acc_hist, train_acc_hist)
+    # run(args, writer, dev)
+    lite = Lite(
+        accelerator='gpu',
+        strategy='ddp',
+        devices=2, # per node
+        num_nodes=2
     )
 
-    writer.add_hparams(args.__dict__, {'0':0.0})
+    lite.run(args)
+
+class Lite(LightningLite):
+    def run(self, args):
+
+        writer = SummaryWriter(log_dir=args.model_dir)
+
+        dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size, 
+                        patch_size=args.p_size, n_classes=19, 
+                        activation=args.activation)
+
+        # if torch.cuda.is_available():
+            # model = model.to(dev)
+            # model = DP(model)
+
+        loss_fn = nn.BCEWithLogitsLoss().to(dev)
+        optimizer = get_optimizer(model, args)
+
+        model, optimizer = self.setup(model, optimizer)
+
+        args.n_params = sum(p.numel() for p in model.parameters())
+        args.n_params_trainable = sum(p.numel() for p in model.parameters())
+
+        valid_ds = BenDataset(args.VALID_CSV_FILE, args.BEN_LMDB_PATH, args.ds_size)
+        train_ds = BenDataset(args.TRAIN_CSV_FILE, args.BEN_LMDB_PATH, args.ds_size)
+
+        valid_loader = DataLoader(valid_ds, batch_size=args.batch_size, shuffle=True)
+        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+        valid_loader = self.setup_dataloaders(valid_loader)
+        train_loader = self.setup_dataloaders(train_loader)
+
+        #### Training ####
+        val_loss_min = np.inf
+        train_loss_hist = []
+        valid_loss_hist = []
+        valid_acc_hist = []
+        train_acc_hist = []
+
+        # Main training loop
+        print('Start main training loop.')
+        for e in range(args.epochs):
+
+            print(f'\n[{e+1:3d}/{args.epochs:3d}]', end=" ")
+
+            # Inference and 
+            model.train()
+            train_loss, train_acc = train_batches(train_loader, model, optimizer, loss_fn, dev)
+            train_loss_hist.append(train_loss)
+            train_acc_hist.append(train_acc)
+                
+            # Evaluate on validation data
+            model.eval()
+            valid_loss, valid_acc = valid_batches(valid_loader, model, loss_fn, dev)
+            valid_loss_hist.append(valid_loss)
+            valid_acc_hist.append(valid_acc)
+
+            print(f'train_loss={train_loss:.4f} train_acc={train_acc:.4f}', end=" ")
+            print(f'val_loss={valid_loss:.4f} val_acc={valid_acc:.4f}')
+            
+            writer.add_scalar("Loss/train", train_loss, e)
+            writer.add_scalar("Loss/valid", valid_loss, e)
+            writer.add_scalar("Acc/train", train_acc, e)
+            writer.add_scalar("Acc/valid", valid_acc, e)
+            
+            # Save checkpoint model if validation loss improves
+            if args.save_training and valid_loss < val_loss_min:
+                print(f'\tval_loss decreased ({val_loss_min:.6f} --> {valid_loss:.6f}). Saving this model ...')
+
+                p = f'{args.model_ckpt_dir}/{e+1}.pt'
+                save_complete_model(p, model)
+                
+                val_loss_min = valid_loss
+
+
+        print('Finished Training')
+        if args.save_training:
+            print('Saving final model ...')
+            p = f'{args.model_ckpt_dir}/{args.epochs}.pt'
+            save_complete_model(p, model)
+
+
+        writer.add_figure("matplotlib", get_history_plots(
+            valid_loss_hist, train_loss_hist,
+            valid_acc_hist, train_acc_hist)
+        )
+        writer.add_hparams(args.__dict__, {'0':0.0})
+
+
+        # Run tests
+        if args.run_tests and args.run_tests_n > 0:
+            run_tests(args, writer, dev)
+
+
+        writer.close()
 
 
 def run_tests(args, writer, dev):
