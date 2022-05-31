@@ -173,10 +173,17 @@ def get_logging_dirs(args):
     """
 
     timestamp = datetime.now().strftime('%m-%d_%H%M_%S')
-    model_arch = f'ConvMx-{args.h}-{args.depth}-{args.k_size}-{args.p_size}'
+    model_arch = f'CvMx-{args.h}-{args.depth}-{args.k_size}-{args.p_size}'
     model_name = timestamp + f'-batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}'
 
     return model_arch, model_name
+
+def get_model_name(args):
+    timestamp = datetime.now().strftime('%m-%d_%H%M_%S')
+    model_arch = f'CvMx-h={args.h}-d={args.depth}-k={args.k_size}-p={args.p_size}'
+    model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}'
+
+    return f'{timestamp}_{model_arch}_{model_config}'
 
 
 def get_optimizer(model, args):

@@ -1,6 +1,7 @@
 import os
 import argparse
 import yaml
+import pprint
 
 import lmdb
 from bigearthnet_patch_interface.s2_interface import BigEarthNet_S2_Patch
@@ -27,7 +28,7 @@ from torch.nn import DataParallel as DP
 
 from dataset_class import *
 from conv_mixer import *
-from training_utils import get_activation, get_logging_dirs, get_optimizer, load_complete_model, train_batches, valid_batches, save_complete_model, get_history_plots
+from training_utils import get_logging_dirs, get_model_name, get_optimizer, load_complete_model, train_batches, valid_batches, save_complete_model, get_history_plots
 
 
 def main():
@@ -48,30 +49,52 @@ def main():
     assert os.path.isfile(args.VALID_CSV_FILE)
     assert os.path.isdir(args.PATH_TO_RUNS)
 
-    args.SPLIT = 'test' if args.test_run else args.SPLIT
-    model_arch, model_name = get_logging_dirs(args)
-    args.model_arch_dir = args.PATH_TO_RUNS + '/' + args.SPLIT + '/' + model_arch
-    args.model_name_dir = args.model_arch_dir + '/' + model_name
-    args.model_ckpt_dir = args.model_name_dir + '/ckpt'
-    print('model_arch_dir', args.model_arch_dir)
-    print('model_name_dir', args.model_name_dir)
+    """
+    runs/
+        default/
+        serbia_summer/
+            exp1
+                /full_model_hps1/
+                    args.yml
+                    ckpts/
+                /full_model_hps2
+                    args.yml
+                    ckpts/
+            exp2
+                /full_model_hps1/
+                    args.yml
+                    ckpts/
+                /full_model_hps2
+                    args.yml
+                    ckpts/
+    """
+    args.model_name = get_model_name(args)
+    args.model_dir = f'{args.PATH_TO_RUNS}/{args.SPLIT}/{args.exp_name}/{args.model_name}'
+    args.model_ckpt_dir = args.model_dir + '/ckpt'
 
-    os.makedirs(args.model_name_dir, exist_ok=False)
+    os.makedirs(args.model_dir, exist_ok=False)
     os.makedirs(args.model_ckpt_dir, exist_ok=False)
 
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    if args.dry_run:
+        args.epochs = 5
+        args.ds_size = 100
+        args.batch_size = 25
+        args.lr = 0.1
+        args.run_tests_n = 2
+
     # Dump arguments into yaml file
-    with open(f'{args.model_name_dir}/args.yaml', 'w') as outfile:
+    pprint.pprint(args.__dict__)
+    with open(f'{args.model_dir}/args.yaml', 'w') as outfile:
         yaml.dump(args.__dict__, outfile, default_flow_style=False)
 
 
-    writer = SummaryWriter(log_dir=args.model_name_dir)
+    writer = SummaryWriter(log_dir=args.model_dir)
     run_training(args, writer, dev)
 
     if args.run_tests and args.run_tests_n > 0:
         run_tests(args, writer, dev)
-
 
     writer.close()
 
@@ -135,7 +158,7 @@ def run_training(args, writer, dev):
         if args.save_training and valid_loss < val_loss_min:
             print(f'\tval_loss decreased ({val_loss_min:.6f} --> {valid_loss:.6f}). Saving this model ...')
 
-            p = f'{args.model_name_dir}/ckpt/{e+1}.pt'
+            p = f'{args.model_ckpt_dir}/{e+1}.pt'
             save_complete_model(p, model)
             
             val_loss_min = valid_loss
@@ -144,7 +167,7 @@ def run_training(args, writer, dev):
     print('Finished Training')
     if args.save_training:
         print('Saving final model ...')
-        p = f'{args.model_name_dir}/{args.epochs}.pt'
+        p = f'{args.model_ckpt_dir}/{args.epochs}.pt'
         save_complete_model(p, model)
 
 
@@ -199,12 +222,16 @@ def _parse_args():
     parser.add_argument('--ds_size', type=int, default=None)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--lr', type=float, default=0.01)
-    parser.add_argument('--optimizer', type=str, default='SGD')
-    parser.add_argument('--activation', type=str, default='GELU')
+    parser.add_argument('--optimizer', type=str, default='SGD',
+                        help='SGD or Adam') #TODO add LAMB
+    parser.add_argument('--activation', type=str, default='GELU',
+                        help='GELU or ReLU')
 
     # Config Parameters
-    parser.add_argument('--test_run', default=False,
-                        help='log into run/test directory')
+    parser.add_argument('--dry_run', default=False,
+                        help='limit ds size and epochs for testing purpose')
+    parser.add_argument('--exp_name', type=str, default='test',
+                        help='save several runs of an experiment in one dir')
     parser.add_argument('--save_training', default=True,
                         help='save checkpoints when valid_loss decreases')
     parser.add_argument('--run_tests', type=bool, default=True,
@@ -213,7 +240,7 @@ def _parse_args():
                         help='test the n best models on test data')
 
     # Model Parameters
-    parser.add_argument('--h', type=int, default=512)
+    parser.add_argument('--h', type=int, default=128)
     parser.add_argument('--depth', type=int, default=8)
     parser.add_argument('--k_size', type=int, default=9)
     parser.add_argument('--p_size', type=int, default=7)

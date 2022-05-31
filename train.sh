@@ -7,7 +7,7 @@
 #SBATCH --gres=gpu:tesla:2
 #SBATCH --mem=100G              # 1GiB resident memory pro node
 
-#SBATCH --time=12:00:00 # Erwartete Laufzeit
+#SBATCH --time=36:00:00 # Erwartete Laufzeit
 #SBATCH --partition=gpu
 
 #Job-Status per Mail:

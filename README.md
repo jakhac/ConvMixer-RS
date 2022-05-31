@@ -16,3 +16,4 @@ Questions
 - Which accuracy for multilabel classification?
 - Which regularization techniques?
 - Which data augmentations?
+- Usage of A100 V100s?
