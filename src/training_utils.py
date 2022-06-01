@@ -8,7 +8,7 @@ import torch.optim as optim
 import torch.nn as nn
 
 
-def train_batches(train_loader, model, optimizer, loss_fn, dev):
+def train_batches(train_loader, model, optimizer, loss_fn, gpu):
     """Perform a full training step for given batches in train_loader.
     Args:
         train_loader (DataLoader): data loader with training images
@@ -21,6 +21,7 @@ def train_batches(train_loader, model, optimizer, loss_fn, dev):
     """
     
     n_batches = len(train_loader)
+    print('train n_batches', n_batches)
     
     train_loss_accu = 0.0
     train_acc_accu = 0.0
@@ -29,7 +30,7 @@ def train_batches(train_loader, model, optimizer, loss_fn, dev):
 
         # Transfer to GPU if available
         if torch.cuda.is_available():
-            X, y = X.to(dev), y.to(dev)
+            X, y = X.cuda(gpu), y.cuda(gpu)
         
         # Clear gradients and pass data through network
         optimizer.zero_grad()
@@ -37,7 +38,7 @@ def train_batches(train_loader, model, optimizer, loss_fn, dev):
         
         # Keep track of accuracy in this epoch
         y_pred = get_predictions_for_batch(outputs)
-        train_acc_accu += get_accuracy_for_batch(y_pred.to(torch.int), y.to(torch.int))
+        model.module.accuracy(y_pred.to(torch.int), y.to(torch.int))
         
         # Add loss to accumulator
         loss = loss_fn(outputs, y)
@@ -49,12 +50,13 @@ def train_batches(train_loader, model, optimizer, loss_fn, dev):
         
         
     train_loss = train_loss_accu / n_batches
-    train_acc = train_acc_accu / n_batches
-    
-    return train_loss, train_acc
+    global_accuracy = model.module.accuracy.compute()
+    model.module.accuracy.reset()
+
+    return train_loss, global_accuracy
 
 
-def valid_batches(val_loader, model, loss_fn, dev):
+def valid_batches(val_loader, model, loss_fn, gpu):
     """Perform validation on val_loader images.
     Args:
         val_loader (DataLoader): data loader with validation data
@@ -69,7 +71,6 @@ def valid_batches(val_loader, model, loss_fn, dev):
     n_batches = len(val_loader)
     
     val_loss_accu = 0.0
-    val_acc_accu = 0.0
     
     model.eval()
     with torch.no_grad():
@@ -78,23 +79,23 @@ def valid_batches(val_loader, model, loss_fn, dev):
             
             # Transfer to GPU if available
             if torch.cuda.is_available():
-                X, y = X.to(dev), y.to(dev)
+                X, y = X.cuda(gpu), y.cuda(gpu)
         
             outputs = model(X)
             
             # Keep track of accuracy in this epoch
             y_pred = get_predictions_for_batch(outputs)
-            val_acc_accu += get_accuracy_for_batch(y_pred.to(torch.int), y.to(torch.int))
+            a = model.module.accuracy(y_pred.to(torch.int), y.to(torch.int))
                 
             # Add loss to accumulator
             loss = loss_fn(outputs, y)
             val_loss_accu += loss.item()
             
-        
+    global_val_accuracy = model.module.accuracy.compute()
+    model.module.accuracy.reset()
     val_loss = val_loss_accu / n_batches
-    val_acc = val_acc_accu / n_batches
     
-    return val_loss, val_acc
+    return val_loss, global_val_accuracy
 
 
 def save_complete_model(path, model):

@@ -1,6 +1,6 @@
 import torch.nn as nn
 from training_utils import get_activation
-
+from torchmetrics import Accuracy
     
 class ConvMixerLayer(nn.Module):
     
@@ -10,7 +10,6 @@ class ConvMixerLayer(nn.Module):
         # Depthwise convolution layer
         self.depthwise_conv = nn.Sequential(
             nn.Conv2d(h, h, kernel_size=kernel_size, groups=h, padding='same'),
-            # nn.GELU(),
             get_activation(activation),
             nn.BatchNorm2d(h)
         )
@@ -18,7 +17,6 @@ class ConvMixerLayer(nn.Module):
         # Pointwise convolution layer
         self.pointwise_conv = nn.Sequential(
             nn.Conv2d(h, h, kernel_size=1),
-            # nn.GELU(),
             get_activation(activation),
             nn.BatchNorm2d(h)
         )
@@ -36,11 +34,14 @@ class ConvMixer(nn.Module):
     def __init__(self, input_dim, h, depth, kernel_size=9, patch_size=7,
                  n_classes=19, activation='GELU'):
         super().__init__()
+
+
+        # Register metric as child module
+        self.accuracy = Accuracy(subset_accuracy=True)
         
         # Patch embeddings as convolutions
         self.patch_embedding = nn.Sequential(
             nn.Conv2d(input_dim, h, kernel_size=patch_size, stride=patch_size),
-            # nn.GELU(),
             get_activation(activation),
             nn.BatchNorm2d(h)
         )
