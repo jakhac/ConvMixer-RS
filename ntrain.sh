@@ -1,6 +1,6 @@
 #!/bin/bash
 
-sbatch train.sh "--epochs=50 --batch_size=128 --lr=0.01 --h=256  --depth=6 --optimizer=Adam --exp_name=lightning_test"
+sbatch train.sh "--epochs=50 --batch_size=128 --lr=0.01 --h=256  --depth=6 --optimizer=Adam --exp_name=t1 --dry_run=True"
 
 ## DEPTH = {2, 4, 6}
 

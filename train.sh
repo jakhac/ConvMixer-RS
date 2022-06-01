@@ -5,12 +5,10 @@
 ##SBATCH --ntasks=2 		# Anzahl Prozesse P (CPU-Cores)
 ##SBATCH --cpus-per-task=1	# Anzahl CPU-Cores pro Prozess P
 
-#SBATCH --nodes=2
-#SBATCH --ntasks-per-node=2
-
-#SBATCH --gres=gpu:tesla:2
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --gres=gpu:tesla:1
 #SBATCH --mem=100G              # 1GiB resident memory pro node
-
 #SBATCH --time=24:00:00 # Erwartete Laufzeit
 #SBATCH --partition=gpu
 

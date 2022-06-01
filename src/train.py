@@ -25,12 +25,16 @@ import torch.optim as optim
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.nn import DataParallel as DP
+from torchmetrics import Accuracy
 
+import pytorch_lightning as pl
 from pytorch_lightning.lite import LightningLite
+from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.callbacks.progress import TQDMProgressBar
 
 from dataset_class import *
 from conv_mixer import *
-from training_utils import get_logging_dirs, get_model_name, get_optimizer, load_complete_model, train_batches, valid_batches, save_complete_model, get_history_plots
+from training_utils import get_accuracy_for_batch, get_logging_dirs, get_model_name, get_optimizer, load_complete_model, train_batches, valid_batches, save_complete_model, get_history_plots
 
 
 def main():
@@ -85,143 +89,241 @@ def main():
         args.run_tests_n = 2
 
     # Dump arguments into yaml file
-    pprint.pprint(args.__dict__)
+    # pprint.pprint(args.__dict__)
     with open(f'{args.model_dir}/args.yaml', 'w') as outfile:
         yaml.dump(args.__dict__, outfile, default_flow_style=False)
 
 
     # run(args, writer, dev)
-    lite = Lite(
+    # lite = Lite(
+    #     accelerator='gpu',
+    #     strategy='ddp',
+    #     devices=2, # per node
+    #     num_nodes=2
+    # )
+
+    # lite.run(args)
+
+    args.model_name = get_model_name(args)
+    args.model_dir = f'{args.PATH_TO_RUNS}/{args.SPLIT}/{args.exp_name}/{args.model_name}'
+    args.model_ckpt_dir = args.model_dir + '/ckpt'
+
+    tb_logger = TensorBoardLogger(
+        f'{args.PATH_TO_RUNS}/{args.SPLIT}/{args.exp_name}/',
+        args.model_name
+    )
+
+
+    pl.seed_everything(42, workers=True)
+    trainer = pl.Trainer(
+        max_epochs=args.epochs,
+        deterministic=True,
+        logger=tb_logger,
+        callbacks=[TQDMProgressBar(refresh_rate=20)],
         accelerator='gpu',
-        strategy='ddp',
-        devices=2, # per node
-        num_nodes=2
+        devices=1,
+        log_every_n_steps=1
     )
 
-    lite.run(args)
+    model = ConvMixerModule(args)
+    print("Start fitting")
+    trainer.fit(model)
+    print("Finito fitting")
 
-class Lite(LightningLite):
-    def run(self, args):
 
-        writer = SummaryWriter(log_dir=args.model_dir)
 
-        dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+class ConvMixerModule(pl.LightningModule):
 
-        model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size, 
-                        patch_size=args.p_size, n_classes=19, 
-                        activation=args.activation)
+    def __init__(self, args):
+        super().__init__()
 
-        # if torch.cuda.is_available():
-            # model = model.to(dev)
-            # model = DP(model)
+        self.args = args
+        print("dec model")
+        self.model = ConvMixer(10, args.h, args.depth, kernel_size=args.k_size, 
+                               patch_size=args.p_size, n_classes=19, 
+                               activation=args.activation)
+        print("model deced")
+        args.n_params = sum(p.numel() for p in self.model.parameters())
+        args.n_params_trainable = sum(p.numel() for p in self.model.parameters())
 
-        loss_fn = nn.BCEWithLogitsLoss().to(dev)
-        optimizer = get_optimizer(model, args)
+        self.accuracy = Accuracy()
+        self.loss_fn = torch.nn.BCEWithLogitsLoss()
 
-        model, optimizer = self.setup(model, optimizer)
 
-        args.n_params = sum(p.numel() for p in model.parameters())
-        args.n_params_trainable = sum(p.numel() for p in model.parameters())
+    def forward(self, x):
+        return self.model(x)
 
-        valid_ds = BenDataset(args.VALID_CSV_FILE, args.BEN_LMDB_PATH, args.ds_size)
-        train_ds = BenDataset(args.TRAIN_CSV_FILE, args.BEN_LMDB_PATH, args.ds_size)
 
-        valid_loader = DataLoader(valid_ds, batch_size=args.batch_size, shuffle=True)
-        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
-        valid_loader = self.setup_dataloaders(valid_loader)
-        train_loader = self.setup_dataloaders(train_loader)
+    def training_step(self, batch, batch_idx):
+        # print("Epoch", self.current_epoch, "Step", self.global_step)
+        x, y = batch
+        y_hat = self.forward(x)
 
-        #### Training ####
-        val_loss_min = np.inf
-        train_loss_hist = []
-        valid_loss_hist = []
-        valid_acc_hist = []
-        train_acc_hist = []
+        train_loss = self.loss_fn(y_hat, y)
 
-        # Main training loop
-        print('Start main training loop.')
-        for e in range(args.epochs):
+        y_sigmoid = torch.sigmoid(y)
+        y_pred = torch.round(y_sigmoid)
+        train_acc = get_accuracy_for_batch(y_pred.to(torch.int), y.to(torch.int))
 
-            print(f'\n[{e+1:3d}/{args.epochs:3d}]', end=" ")
+        self.log("train_loss", train_loss, on_epoch=True, on_step=True, prog_bar=True, logger=True)
+        self.log('train_acc', train_acc, on_epoch=True, on_step=True, prog_bar=True, logger=True)
 
-            # Inference and 
-            model.train()
-            train_loss, train_acc = train_batches(train_loader, model, optimizer, loss_fn, dev)
-            train_loss_hist.append(train_loss)
-            train_acc_hist.append(train_acc)
+        return {
+            'loss': train_loss,
+            'acc': train_acc
+        }
+
+
+    def training_epoch_end(self, outputs):
+        # calculating average loss  
+        avg_loss = torch.stack([x['loss'] for x in outputs]).mean()
+        avg_acc = torch.stack([x['acc'] for x in outputs]).mean()
+
+        # logging using tensorboard logger
+        self.logger.experiment.add_scalar("Loss/Train", avg_loss, self.current_epoch)
+        self.logger.experiment.add_scalar("Accuracy/Train", avg_acc, self.current_epoch)
+
+
+    def validation_step(self, batch, batch_idx):
+        print("Validate", self.current_epoch, "Step", self.global_step)
+        x, y = batch
+        y_hat = self.model(x)
+        valid_loss = self.loss_fn(y_hat, y)
+
+        y_sigmoid = torch.sigmoid(y)
+        y_pred = torch.round(y_sigmoid)
+        valid_acc = get_accuracy_for_batch(y_pred.to(torch.int), y.to(torch.int))
+
+
+        self.log("valid_loss", valid_loss, on_step=True, prog_bar=True, logger=True)
+        self.log('valid_acc', valid_acc, on_step=True, prog_bar=True, logger=True)
+
+        return valid_loss
+
+    
+    # def test_step(self, batch, batch_idx):
+    #     x, y = batch
+    #     y_hat = self.model(x)
+    #     test_loss = nn.BCEWithLogitsLoss(y_hat, y)
+
+    #     self.log("test_loss", test_loss)
+
+
+    def configure_optimizers(self):
+        return get_optimizer(self.model, self.args)
+
+
+    def train_dataloader(self):
+        train_ds = BenDataset(self.args.TRAIN_CSV_FILE, self.args.BEN_LMDB_PATH, self.args.ds_size)
+        train_loader = DataLoader(train_ds, batch_size=self.args.batch_size, shuffle=True)
+        return train_loader
+
+    def val_dataloader(self):
+        valid_ds = BenDataset(self.args.VALID_CSV_FILE, self.args.BEN_LMDB_PATH, self.args.ds_size)
+        valid_loader = DataLoader(valid_ds, batch_size=self.args.batch_size, shuffle=True)
+        return valid_loader
+
+
+    # def test_dataloader(self):
+    #     test_ds = BenDataset(self.args.VALID_CSV_FILE, self.args.BEN_LMDB_PATH, self.args.ds_size)
+    #     test_loader = DataLoader(test_ds, batch_size=self.args.batch_size, shuffle=True)
+    #     return test_loader
+
+
+        # writer = SummaryWriter(log_dir=args.model_dir)
+
+
+        # #### Training ####
+        # val_loss_min = np.inf
+        # train_loss_hist = []
+        # valid_loss_hist = []
+        # valid_acc_hist = []
+        # train_acc_hist = []
+
+        # # Main training loop
+        # print('Start main training loop.')
+        # for e in range(args.epochs):
+
+        #     print(f'\n[{e+1:3d}/{args.epochs:3d}]', end=" ")
+
+        #     # Inference and 
+        #     model.train()
+        #     train_loss, train_acc = train_batches(train_loader, model, optimizer, loss_fn, dev)
+        #     train_loss_hist.append(train_loss)
+        #     train_acc_hist.append(train_acc)
                 
-            # Evaluate on validation data
-            model.eval()
-            valid_loss, valid_acc = valid_batches(valid_loader, model, loss_fn, dev)
-            valid_loss_hist.append(valid_loss)
-            valid_acc_hist.append(valid_acc)
+        #     # Evaluate on validation data
+        #     model.eval()
+        #     valid_loss, valid_acc = valid_batches(valid_loader, model, loss_fn, dev)
+        #     valid_loss_hist.append(valid_loss)
+        #     valid_acc_hist.append(valid_acc)
 
-            print(f'train_loss={train_loss:.4f} train_acc={train_acc:.4f}', end=" ")
-            print(f'val_loss={valid_loss:.4f} val_acc={valid_acc:.4f}')
+        #     print(f'train_loss={train_loss:.4f} train_acc={train_acc:.4f}', end=" ")
+        #     print(f'val_loss={valid_loss:.4f} val_acc={valid_acc:.4f}')
             
-            writer.add_scalar("Loss/train", train_loss, e)
-            writer.add_scalar("Loss/valid", valid_loss, e)
-            writer.add_scalar("Acc/train", train_acc, e)
-            writer.add_scalar("Acc/valid", valid_acc, e)
+        #     writer.add_scalar("Loss/train", train_loss, e)
+        #     writer.add_scalar("Loss/valid", valid_loss, e)
+        #     writer.add_scalar("Acc/train", train_acc, e)
+        #     writer.add_scalar("Acc/valid", valid_acc, e)
             
-            # Save checkpoint model if validation loss improves
-            if args.save_training and valid_loss < val_loss_min:
-                print(f'\tval_loss decreased ({val_loss_min:.6f} --> {valid_loss:.6f}). Saving this model ...')
+        #     # Save checkpoint model if validation loss improves
+        #     if args.save_training and valid_loss < val_loss_min:
+        #         print(f'\tval_loss decreased ({val_loss_min:.6f} --> {valid_loss:.6f}). Saving this model ...')
 
-                p = f'{args.model_ckpt_dir}/{e+1}.pt'
-                save_complete_model(p, model)
+        #         p = f'{args.model_ckpt_dir}/{e+1}.pt'
+        #         save_complete_model(p, model)
                 
-                val_loss_min = valid_loss
+        #         val_loss_min = valid_loss
 
 
-        print('Finished Training')
-        if args.save_training:
-            print('Saving final model ...')
-            p = f'{args.model_ckpt_dir}/{args.epochs}.pt'
-            save_complete_model(p, model)
+        # print('Finished Training')
+        # if args.save_training:
+        #     print('Saving final model ...')
+        #     p = f'{args.model_ckpt_dir}/{args.epochs}.pt'
+        #     save_complete_model(p, model)
 
 
-        writer.add_figure("matplotlib", get_history_plots(
-            valid_loss_hist, train_loss_hist,
-            valid_acc_hist, train_acc_hist)
-        )
-        writer.add_hparams(args.__dict__, {'0':0.0})
+        # writer.add_figure("matplotlib", get_history_plots(
+        #     valid_loss_hist, train_loss_hist,
+        #     valid_acc_hist, train_acc_hist)
+        # )
+        # writer.add_hparams(args.__dict__, {'0':0.0})
 
 
-        # Run tests
-        if args.run_tests and args.run_tests_n > 0:
-            run_tests(args, writer, dev)
+        # # Run tests
+        # if args.run_tests and args.run_tests_n > 0:
+        #     run_tests(args, writer, dev)
 
 
-        writer.close()
+        # writer.close()
 
 
-def run_tests(args, writer, dev):
+# def run_tests(args, writer, dev):
 
-    print('\n\nStart testing phase.')
+#     print('\n\nStart testing phase.')
 
-    ckpt_names = natsorted(
-        [Path(f).stem for f in os.listdir(args.model_ckpt_dir)]
-    )
-    print("Found following (sorted!) model checkpoints:", ckpt_names)
+#     ckpt_names = natsorted(
+#         [Path(f).stem for f in os.listdir(args.model_ckpt_dir)]
+#     )
+#     print("Found following (sorted!) model checkpoints:", ckpt_names)
 
-    loss_fn = nn.BCEWithLogitsLoss().to(dev)
-    test_ds = BenDataset(args.TEST_CSV_FILE, args.BEN_LMDB_PATH, args.ds_size)
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
+#     loss_fn = nn.BCEWithLogitsLoss().to(dev)
+#     test_ds = BenDataset(args.TEST_CSV_FILE, args.BEN_LMDB_PATH, args.ds_size)
+#     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
 
-    for model_name in list(reversed(ckpt_names))[:args.run_tests_n]:
-        print(f'\nLoad {args.model_ckpt_dir}/{model_name}.pt for testing.')
+#     for model_name in list(reversed(ckpt_names))[:args.run_tests_n]:
+#         print(f'\nLoad {args.model_ckpt_dir}/{model_name}.pt for testing.')
 
-        model = load_complete_model(f'{args.model_ckpt_dir}/{model_name}.pt')
-        test_loss, test_acc = valid_batches(test_loader, model, loss_fn, dev)
+#         model = load_complete_model(f'{args.model_ckpt_dir}/{model_name}.pt')
+#         test_loss, test_acc = valid_batches(test_loader, model, loss_fn, dev)
         
-        print(f'{model_name}.pt scores test_loss={test_loss:.4f} test_acc={test_acc:.4f}')
+#         print(f'{model_name}.pt scores test_loss={test_loss:.4f} test_acc={test_acc:.4f}')
 
-        writer.add_scalar("Acc/test", test_acc, int(model_name))
-        writer.add_scalar("Loss/test", test_loss, int(model_name))
+#         writer.add_scalar("Acc/test", test_acc, int(model_name))
+#         writer.add_scalar("Loss/test", test_loss, int(model_name))
 
 
-    print('\nFinished testing phase.')
+#     print('\nFinished testing phase.')
 
 
 def _parse_args():

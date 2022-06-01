@@ -1,8 +1,10 @@
 import torch.nn as nn
+import pytorch_lightning as pl
+
 from training_utils import get_activation
 
     
-class ConvMixerLayer(nn.Module):
+class ConvMixerLayer(pl.LightningModule):
     
     def __init__(self, h, kernel_size=9, activation='GELU'):
         super().__init__()
@@ -31,7 +33,7 @@ class ConvMixerLayer(nn.Module):
         return x   
 
 
-class ConvMixer(nn.Module):
+class ConvMixer(pl.LightningModule):
     
     def __init__(self, input_dim, h, depth, kernel_size=9, patch_size=7,
                  n_classes=19, activation='GELU'):
