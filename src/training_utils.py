@@ -1,14 +1,17 @@
+import argparse
+
 import torch
-from sklearn.metrics import accuracy_score
+from torchmetrics import Accuracy
 from torchmetrics.functional import accuracy
 import matplotlib.pyplot as plt
 from datetime import datetime
 
 import torch.optim as optim
 import torch.nn as nn
+import torch.distributed as dist
 
 
-def train_batches(train_loader, model, optimizer, loss_fn, gpu):
+def train_batches(train_loader, model, optimizer, gpu):
     """Perform a full training step for given batches in train_loader.
     Args:
         train_loader (DataLoader): data loader with training images
@@ -20,43 +23,32 @@ def train_batches(train_loader, model, optimizer, loss_fn, gpu):
         (float, float): (loss, accuracy) for this data_loader
     """
     
+    total_acc = 0.0
+    total_loss = 0.0
     n_batches = len(train_loader)
     print('train n_batches', n_batches)
-    
-    train_loss_accu = 0.0
-    train_acc_accu = 0.0
-    model.train()
-    for batch_idx, (X, y) in enumerate(train_loader):
 
-        # Transfer to GPU if available
-        if torch.cuda.is_available():
-            X, y = X.cuda(gpu), y.cuda(gpu)
-        
-        # Clear gradients and pass data through network
+    model.train()
+    for X, y in train_loader:
+        X, y = X.cuda(gpu), y.cuda(gpu)
         optimizer.zero_grad()
         outputs = model(X)
         
         # Keep track of accuracy in this epoch
         y_pred = get_predictions_for_batch(outputs)
-        model.module.accuracy(y_pred.to(torch.int), y.to(torch.int))
+        total_acc += accuracy(y_pred.to(torch.int), y.to(torch.int),
+                              subset_accuracy=True)
         
         # Add loss to accumulator
-        loss = loss_fn(outputs, y)
+        loss = model.module.loss(outputs, y)
+        total_loss += loss.item()
         loss.backward()
         optimizer.step()
         
-        # Keep track of loss
-        train_loss_accu += loss.item()
-        
-        
-    train_loss = train_loss_accu / n_batches
-    global_accuracy = model.module.accuracy.compute()
-    model.module.accuracy.reset()
-
-    return train_loss, global_accuracy
+    return (total_loss / n_batches), (total_acc / n_batches)
 
 
-def valid_batches(val_loader, model, loss_fn, gpu):
+def valid_batches(val_loader, model, gpu):
     """Perform validation on val_loader images.
     Args:
         val_loader (DataLoader): data loader with validation data
@@ -69,54 +61,26 @@ def valid_batches(val_loader, model, loss_fn, gpu):
     """
 
     n_batches = len(val_loader)
-    
-    val_loss_accu = 0.0
+    total_loss = 0.0
+    total_acc = 0.0
     
     model.eval()
     with torch.no_grad():
-        
         for X, y in val_loader:
-            
-            # Transfer to GPU if available
-            if torch.cuda.is_available():
-                X, y = X.cuda(gpu), y.cuda(gpu)
-        
+            X, y = X.cuda(gpu), y.cuda(gpu)
             outputs = model(X)
             
             # Keep track of accuracy in this epoch
             y_pred = get_predictions_for_batch(outputs)
-            a = model.module.accuracy(y_pred.to(torch.int), y.to(torch.int))
-                
-            # Add loss to accumulator
-            loss = loss_fn(outputs, y)
-            val_loss_accu += loss.item()
+            total_acc += accuracy(y_pred.to(torch.int), y.to(torch.int),
+                                  subset_accuracy=True)   
             
-    global_val_accuracy = model.module.accuracy.compute()
-    model.module.accuracy.reset()
-    val_loss = val_loss_accu / n_batches
-    
-    return val_loss, global_val_accuracy
+            # Add loss to accumulator
+            loss = model.module.loss(outputs, y)
+            total_loss += loss.item()
+            
 
-
-def save_complete_model(path, model):
-    """Save a complete model. Loading does not require architecture beforehand.add()
-    Args:
-        path (string): path/to/model-file.pt
-        model (Model): model to save
-    """
-    
-    torch.save(model, path)
-    
-
-def load_complete_model(path):
-    """Load complete model from path.add()
-    Args:
-        path (string): path/to/model-file.pt
-    Returns:
-        Model: complete model
-    """
-    
-    return torch.load(path)
+    return (total_loss / n_batches), (total_acc / n_batches)
 
 
 def get_predictions_for_batch(outputs):
@@ -133,12 +97,6 @@ def get_predictions_for_batch(outputs):
     predictions = torch.round(outputs_sig)
     
     return predictions
-
-
-def get_accuracy_for_batch(y_true, y_pred):
-    assert y_true.shape == y_pred.shape
-    
-    return accuracy(y_pred, y_true, subset_accuracy=True)
 
 
 def get_history_plots(val_loss_hist, train_loss_hist, val_acc_hist, train_acc_hist):
@@ -162,25 +120,61 @@ def get_history_plots(val_loss_hist, train_loss_hist, val_acc_hist, train_acc_hi
     return fig
 
 
-def get_logging_dirs(args):
-    """Determine model-architecture directory (4 hyperparameters) and
-    the model name based on training (..) parameters
-
-    Args:
-        args (args): args
+def _parse_args():
+    """Parse arguments and return ArgumentParser obj
 
     Returns:
-        (string, string): model_arch, model_name
+        ArgumentParser: obj
     """
 
-    timestamp = datetime.now().strftime('%m-%d_%H%M_%S')
-    model_arch = f'CvMx-{args.h}-{args.depth}-{args.k_size}-{args.p_size}'
-    model_name = timestamp + f'-batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}'
+    parser = argparse.ArgumentParser(description="ConvMixer Parameters")
 
-    return model_arch, model_name
+    # DDP config
+    parser.add_argument('--dist-url', default='env://', type=str, 
+                        help='url used to set up distributed training')
+    parser.add_argument('--dist-backend', default='nccl', type=str, 
+                        help='distributed backend')
+
+    # Training parameters
+    parser.add_argument('--epochs', type=int, default=25)
+    parser.add_argument('--batch_size', type=int, default=256)
+    parser.add_argument('--ds_size', type=int, default=None)
+    parser.add_argument('--momentum', type=float, default=0.9)
+    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--optimizer', type=str, default='SGD',
+                        help='SGD or Adam') #TODO add LAMB
+    parser.add_argument('--activation', type=str, default='GELU',
+                        help='GELU or ReLU')
+
+    # Config parameters
+    parser.add_argument('--timestamp', type=str, default="",
+                        help='unix timestamp to create unique folder')
+    parser.add_argument('--dry_run', default=False,
+                        help='limit ds size and epochs for testing purpose')
+    parser.add_argument('--exp_name', type=str, default='test',
+                        help='save several runs of an experiment in one dir')
+    parser.add_argument('--save_training', default=True,
+                        help='save checkpoints when valid_loss decreases')
+    parser.add_argument('--run_tests', type=bool, default=True,
+                        help='run best models on test data')
+    parser.add_argument('--run_tests_n', type=int, default=5,
+                        help='test the n best models on test data')
+
+
+    # Model parameters
+    parser.add_argument('--h', type=int, default=128)
+    parser.add_argument('--depth', type=int, default=8)
+    parser.add_argument('--k_size', type=int, default=9)
+    parser.add_argument('--p_size', type=int, default=7)
+    parser.add_argument('--k_dilation', type=int, default=1)
+
+    return parser.parse_args()
+
 
 def get_model_name(args):
-    timestamp = datetime.now().strftime('%m-%d_%H%M_%S')
+    assert args.timestamp != ""
+
+    timestamp = datetime.utcfromtimestamp(float(args.timestamp)).strftime('%m-%d_%H%M_%S')
     model_arch = f'CvMx-h={args.h}-d={args.depth}-k={args.k_size}-p={args.p_size}'
     model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}'
 

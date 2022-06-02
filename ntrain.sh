@@ -1,6 +1,6 @@
 #!/bin/bash
 
-sbatch train.sh "--epochs=50 --batch_size=128 --lr=0.01 --h=256 --depth=6 --optimizer=Adam --exp_name=ddp_runtest --dry_run=True"
+sbatch train.sh "--epochs=25 --batch_size=128 --lr=0.01 --h=256 --depth=6 --optimizer=Adam --exp_name=ddp_runtest"
 
 ## DEPTH = {2, 4, 6}
 # sbatch train.sh "--epochs=25 --batch_size=128 --lr=0.01 --h=64  --depth=2 --optimizer=Adam --exp_name=hparam_d_h_test"

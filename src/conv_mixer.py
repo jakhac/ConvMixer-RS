@@ -1,7 +1,10 @@
+import torch
 import torch.nn as nn
 from training_utils import get_activation
-from torchmetrics import Accuracy
-    
+from torchmetrics.functional import accuracy
+# from torchmetrics import Accuracy, Metric
+
+
 class ConvMixerLayer(nn.Module):
     
     def __init__(self, h, kernel_size=9, activation='GELU'):
@@ -30,14 +33,15 @@ class ConvMixerLayer(nn.Module):
 
 
 class ConvMixer(nn.Module):
-    
+
     def __init__(self, input_dim, h, depth, kernel_size=9, patch_size=7,
                  n_classes=19, activation='GELU'):
         super().__init__()
 
 
-        # Register metric as child module
-        self.accuracy = Accuracy(subset_accuracy=True)
+        # self.accuracy = Accuracy(subset_accuracy=True)
+        # self.loss = _BCEWithLogitsLoss()
+        self.loss = nn.BCEWithLogitsLoss()
         
         # Patch embeddings as convolutions
         self.patch_embedding = nn.Sequential(

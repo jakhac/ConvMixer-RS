@@ -1,5 +1,4 @@
 import os
-import argparse
 import yaml
 import pprint
 
@@ -14,8 +13,6 @@ from natsort import natsorted
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.metrics import accuracy_score
-
 from torchmetrics import Accuracy
 
 import torch
@@ -31,7 +28,7 @@ from torch.utils.data.distributed import DistributedSampler
 
 from dataset_class import *
 from conv_mixer import *
-from training_utils import get_logging_dirs, get_model_name, get_optimizer, load_complete_model, train_batches, valid_batches, save_complete_model, get_history_plots
+from training_utils import _parse_args, get_model_name, get_optimizer, train_batches, valid_batches
 
 import time
 import socket
@@ -41,7 +38,6 @@ import socket
 def main():
 
     args = _parse_args()
-
 
     ### DDP settings ###
     assert "WORLD_SIZE" in os.environ
@@ -126,7 +122,7 @@ def main():
             yaml.dump(args.__dict__, outfile, default_flow_style=False)
 
 
-    writer = SummaryWriter(log_dir=args.model_dir) if args.is_master else None
+    writer = SummaryWriter(log_dir=args.model_dir)# if args.is_master else None
     run_training(args, writer)
     # run_tests(args, writer)
     
@@ -137,7 +133,7 @@ def main():
 def run_training(args, writer=None):
 
     print(f"{args.id_string} Start training ...")
-    torch.manual_seed(42) 
+    torch.manual_seed(42)
 
     ### model ###
     model = ConvMixer(
@@ -145,7 +141,6 @@ def run_training(args, writer=None):
         patch_size=args.p_size, n_classes=19, 
         activation=args.activation
     )
-    loss_fn = nn.BCEWithLogitsLoss()
     optimizer = get_optimizer(model, args)
 
     args.n_params = sum(p.numel() for p in model.parameters())
@@ -160,11 +155,9 @@ def run_training(args, writer=None):
             torch.cuda.set_device(args.gpu)
             model.cuda(args.gpu)
             model = DDP(model, device_ids=[args.gpu])
-            # model_without_ddp = model.module
         else:
             model.cuda()
             model = DDP(model)
-            # model_without_ddp = model.module
     else:
         raise NotImplementedError("Only DistributedDataParallel is supported.")
 
@@ -175,11 +168,10 @@ def run_training(args, writer=None):
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=False,
                               sampler=train_sampler, drop_last=True)
 
-    # validation happens non distributed
     valid_ds = BenDataset(args.VALID_CSV_FILE, args.BEN_LMDB_PATH, args.ds_size)
-    valid_sampler = None
-    valid_loader = DataLoader(valid_ds, batch_size=args.batch_size, shuffle=True,
-                              drop_last=True)
+    valid_sampler = DistributedSampler(valid_ds, shuffle=True)
+    valid_loader = DataLoader(valid_ds, batch_size=args.batch_size, shuffle=False,
+                              sampler=valid_sampler, drop_last=True)
 
 
     #### Training ####
@@ -198,35 +190,83 @@ def run_training(args, writer=None):
         if args.distributed:
             train_loader.sampler.set_epoch(e)
 
-        # Train one set of batches
+        ### TRAINING ###
         model.train()
-        train_loss, train_acc = train_batches(train_loader, model, optimizer, loss_fn, args.gpu)
+        train_loss, train_acc = train_batches(train_loader, model, optimizer, args.gpu)
         train_loss_hist.append(train_loss)
         train_acc_hist.append(train_acc)
+
+        # Log local metrics
+        print(f'{args.id_string} train_loss={train_loss:.4f} train_acc={train_acc:.4f}')
+        writer.add_scalar(f"Per-GPU-Loss/train_gpu{args.rank}", train_loss, e)
+        writer.add_scalar(f"Per-GPU-Acc/train_gpu{args.rank}", train_acc, e)
+
+        # Gather global metrics to log average later
+        global_train_losses = torch.ones(args.world_size, dtype=torch.float32).cuda(args.gpu)
+        global_train_accs = torch.ones(args.world_size, dtype=torch.float32).cuda(args.gpu)
+        if args.is_master:
+            dist.gather(
+                torch.tensor(train_loss).cuda(args.gpu),
+                gather_list=[a.to(torch.float) for a in global_train_losses]
+            )
+
+            dist.gather(
+                torch.tensor(train_acc).cuda(args.gpu),
+                gather_list=[a.to(torch.float) for a in global_train_accs]
+            )
+        else:
+            dist.gather(torch.tensor(train_loss).cuda(args.gpu))
+            dist.gather(torch.tensor(train_acc).cuda(args.gpu))
+        
             
-        # Validate one set of batches
+        ### VALIDATION ###
         model.eval()
-        valid_loss, valid_acc = valid_batches(valid_loader, model, loss_fn, args.gpu)
+        valid_loss, valid_acc = valid_batches(valid_loader, model, args.gpu)
         valid_loss_hist.append(valid_loss)
         valid_acc_hist.append(valid_acc)
 
-        print(f'{args.id_string} train_loss={train_loss:.4f} train_acc={train_acc:.4f}', end=" ")
-        print(f'val_loss={valid_loss:.4f} val_acc={valid_acc:.4f}')
+        # Log local metrics
+        print(f'{args.id_string} train_loss={valid_loss:.4f} train_acc={valid_acc:.4f}')
+        writer.add_scalar(f"Per-GPU-Loss/valid_gpu{args.rank}", valid_loss, e)
+        writer.add_scalar(f"Per-GPU-Acc/valid_gpu{args.rank}", valid_acc, e)
+
+        # Gather global metrics to log average later
+        global_valid_losses = torch.ones(args.world_size, dtype=torch.float32).cuda(args.gpu)
+        global_valid_accs = torch.ones(args.world_size, dtype=torch.float32).cuda(args.gpu)
+        if args.is_master:
+            dist.gather(torch.tensor(valid_loss).cuda(args.gpu),
+                        gather_list=[a.to(torch.float) for a in global_valid_losses])
+
+            dist.gather(torch.tensor(valid_acc).cuda(args.gpu),
+                        gather_list=[a.to(torch.float) for a in global_valid_accs])
+        else:
+            dist.gather(torch.tensor(valid_loss).cuda(args.gpu))
+            dist.gather(torch.tensor(valid_acc).cuda(args.gpu))
+
 
 
         # After each epoch, the master handles logging and checkpoint saving
-        if writer is not None:
-            writer.add_scalar("Loss/train", train_loss, e)
-            writer.add_scalar("Loss/valid", valid_loss, e)
-            writer.add_scalar("Acc/train", train_acc, e)
+        if args.is_master:
+
+            global_train_loss = torch.mean(global_train_losses)
+            global_valid_loss = torch.mean(global_valid_losses)
+            global_train_acc = torch.mean(global_train_accs)
+            global_valid_acc = torch.mean(global_valid_accs)
+
+            print(f'Epoch {e} train_loss={global_train_loss:.4f} train_acc={global_train_acc:.4f}')
+            print(f'Epoch {e} val_loss={global_valid_loss:.4f} val_acc={global_valid_acc:.4f}')
+
+            writer.add_scalar("Loss/train", global_train_loss, e)
+            writer.add_scalar("Loss/valid", global_valid_loss, e)
+            writer.add_scalar("Acc/train", global_train_acc, e)
             writer.add_scalar("Acc/valid", valid_acc, e)
         
             # Save checkpoint model if validation loss improves
             if args.save_training and valid_loss < val_loss_min:
                 print(f'\tval_loss decreased ({val_loss_min:.6f} --> {valid_loss:.6f}). Saving this model ...')
 
-                p = f'{args.model_ckpt_dir}/{e+1}.pt'
-                save_complete_model(p, model)
+                p = f'{args.model_ckpt_dir}/{e+1}.ckpt'
+                torch.save(model.state_dict(), p)
                 
                 val_loss_min = valid_loss
 
@@ -237,88 +277,37 @@ def run_training(args, writer=None):
 
         if args.save_training:
             print('Saving final model ...')
-            p = f'{args.model_ckpt_dir}/{args.epochs}.pt'
-            save_complete_model(p, model)
+            p = f'{args.model_ckpt_dir}/{args.epochs}.ckpt'
+            torch.save(model.state_dict(), p)
 
 
-# def run_tests(args, writer=None):
-
-#     print('\n\nStart testing phase on master node.')
-
-#     ckpt_names = natsorted(
-#         [Path(f).stem for f in os.listdir(args.model_ckpt_dir)]
-#     )
-#     print("Found following (sorted!) model checkpoints:", ckpt_names)
-
-#     loss_fn = nn.BCEWithLogitsLoss()
-#     test_ds = BenDataset(args.TEST_CSV_FILE, args.BEN_LMDB_PATH, args.ds_size)
-#     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
-
-#     for model_name in list(reversed(ckpt_names))[:args.run_tests_n]:
-#         print(f'\nLoad {args.model_ckpt_dir}/{model_name}.pt for testing.')
-
-#         model = load_complete_model(f'{args.model_ckpt_dir}/{model_name}.pt')
-#         model = model.cuda(args.gpu)
-#         test_loss, test_acc = valid_batches(test_loader, model, loss_fn, args.gpu)
-        
-#         print(f'{model_name}.pt scores test_loss={test_loss:.4f} test_acc={test_acc:.4f}')
-
-#         if writer is not None:
-#             writer.add_scalar("Acc/test", test_acc, int(model_name))
-#             writer.add_scalar("Loss/test", test_loss, int(model_name))
+    dist.barrier()
 
 
-#     print('\nFinished testing phase.')
+    print('\nStart testing phase.')
+    
+    ckpt_names = natsorted([Path(f).stem for f in os.listdir(args.model_ckpt_dir)])
+    print("Found following (sorted!) model checkpoints:", ckpt_names)
+
+    test_ds = BenDataset(args.TEST_CSV_FILE, args.BEN_LMDB_PATH, args.ds_size)
+    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False,
+                             sampler=None)
+
+    for model_name in list(reversed(ckpt_names))[:args.run_tests_n]:
+        print(f'\nLoad {args.model_ckpt_dir}/{model_name}.ckpt for testing.')
+        p = f'{args.model_ckpt_dir}/{model_name}.ckpt'
+
+        model.load_state_dict(torch.load(p, map_location='cuda:' + str(args.gpu)))
+        test_loss, test_acc = valid_batches(test_loader, model, args.gpu)
+        print(f'{model_name}.ckpt scores test_loss={test_loss:.4f} test_acc={test_acc:.4f}')
+
+        writer.add_scalar("Acc/test", test_acc, int(model_name))
+        writer.add_scalar("Loss/test", test_loss, int(model_name))
 
 
+    print('\nFinished testing phase.')
 
-def _parse_args():
-    """Parse arguments and return ArgumentParser obj
-
-    Returns:
-        ArgumentParser: obj
-    """
-
-    parser = argparse.ArgumentParser(description="ConvMixer Parameters")
-
-    # DDP config
-    parser.add_argument('--dist-url', default='env://', type=str, 
-                        help='url used to set up distributed training')
-    parser.add_argument('--dist-backend', default='nccl', type=str, 
-                        help='distributed backend')
-
-    # Training parameters
-    parser.add_argument('--epochs', type=int, default=25)
-    parser.add_argument('--batch_size', type=int, default=256)
-    parser.add_argument('--ds_size', type=int, default=None)
-    parser.add_argument('--momentum', type=float, default=0.9)
-    parser.add_argument('--lr', type=float, default=0.01)
-    parser.add_argument('--optimizer', type=str, default='SGD',
-                        help='SGD or Adam') #TODO add LAMB
-    parser.add_argument('--activation', type=str, default='GELU',
-                        help='GELU or ReLU')
-
-    # Config parameters
-    parser.add_argument('--dry_run', default=False,
-                        help='limit ds size and epochs for testing purpose')
-    parser.add_argument('--exp_name', type=str, default='test',
-                        help='save several runs of an experiment in one dir')
-    parser.add_argument('--save_training', default=True,
-                        help='save checkpoints when valid_loss decreases')
-    parser.add_argument('--run_tests', type=bool, default=True,
-                        help='run best models on test data')
-    parser.add_argument('--run_tests_n', type=int, default=5,
-                        help='test the n best models on test data')
-
-
-    # Model parameters
-    parser.add_argument('--h', type=int, default=128)
-    parser.add_argument('--depth', type=int, default=8)
-    parser.add_argument('--k_size', type=int, default=9)
-    parser.add_argument('--p_size', type=int, default=7)
-    parser.add_argument('--k_dilation', type=int, default=1)
-
-    return parser.parse_args()
+    dist.destroy_process_group()
 
 
 if __name__ == '__main__':

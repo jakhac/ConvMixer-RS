@@ -76,7 +76,3 @@ class BenDataset(Dataset):
         one_hot_labels = self.mlb.transform([str_labels])[0]
         
         return bands_stacked_torch[0], torch.from_numpy(one_hot_labels).type(torch.FloatTensor)
-    
-    
-    def get_mlb(self):
-        return self.mlb
