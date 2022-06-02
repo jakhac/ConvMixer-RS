@@ -120,18 +120,4 @@ def get_activation(activation):
     else:
         print("Error: get_activation() did not find a matching activation fn.")
         assert False
-
-
-def save_model(args, optimizer, model, e):
-
-    path = f'{args.model_ckpt_dir}/{e+1}.pt'
-    torch.save(model.state_dict(), path)
-    # torch.save({
-    #         'model_state_dict': model.state_dict(),
-    #         'optim_state_doct': optimizer.state_dict(),
-    #         'epoch': e
-    #         },
-    #         path
-    #     )
-
     

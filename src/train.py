@@ -315,9 +315,6 @@ def run_tests(args, writer, model):
         print(f'\nLoad {args.model_ckpt_dir}/{model_name}.ckpt for testing.')
         p = f'{args.model_ckpt_dir}/{model_name}.ckpt'
 
-        # state_dict = torch.load(p, map_location='cuda:' + str(args.gpu))
-        # print("SATE999", state_dict['model_state_dict'].keys())
-        # model.load_state_dict(state_dict['model_state_dict'])
         model.load_state_dict(
             torch.load(p, map_location='cuda:' + str(args.gpu)))
 
