@@ -33,9 +33,6 @@ echo "MASTER_ADDR="$MASTER_ADDR
 
 # export NCCL_DEBUG=INFO
 
-timestamp=$(date +%s)
-echo "Timestamp" $timestamp
-
 cd /scratch/jakhac/ConvMixer/src
 
 echo "Args:"
@@ -43,8 +40,5 @@ echo $1
 
 echo ""
 echo "Start execution of train.py"
-srun python3 train.py $1 --timestamp=$timestamp
+srun python3 train.py $1
 
-# echo ""
-# echo "Start execution of test.py"
-# srun python3 test.py $1 --timestamp=$timestamp

@@ -1,38 +1,78 @@
 import os
+from re import M
 import yaml
-import pprint
+import argparse
+import socket
 
-import lmdb
-from bigearthnet_patch_interface.s2_interface import BigEarthNet_S2_Patch
 from pathlib import Path
-import importlib
 from dotenv import load_dotenv
-from datetime import datetime
 from natsort import natsorted
 
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from torchmetrics import Accuracy
+
 
 import torch
-from torch import Tensor, cat, stack
 from torch.utils.data import DataLoader
-import torch.optim as optim
-import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
 
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 
-from dataset_class import *
+from ben_dataset import *
 from conv_mixer import *
-from training_utils import _parse_args, get_model_name, get_optimizer, train_batches, valid_batches
+from training_utils import *
 
-import time
-import socket
 
+def _parse_args():
+    """Parse arguments and return ArgumentParser obj
+
+    Returns:
+        ArgumentParser: ArgumentParser
+    """
+
+    parser = argparse.ArgumentParser(description="ConvMixer Parameters")
+
+    # DDP config
+    parser.add_argument('--dist-url', default='env://', type=str, 
+                        help='url used to set up distributed training')
+    parser.add_argument('--dist-backend', default='nccl', type=str, 
+                        help='distributed backend')
+
+    # Training parameters
+    parser.add_argument('--epochs', type=int, default=25)
+    parser.add_argument('--batch_size', type=int, default=256)
+    parser.add_argument('--ds_size', type=int, default=None)
+    parser.add_argument('--momentum', type=float, default=0.9)
+    parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--optimizer', type=str, default='SGD',
+                        help='SGD or Adam')
+    parser.add_argument('--activation', type=str, default='GELU',
+                        help='GELU or ReLU')
+
+    # Config parameters
+    parser.add_argument('--timestamp', type=str, default="",
+                        help='unix timestamp to create unique folder')
+    parser.add_argument('--dry_run', default=False,
+                        help='limit ds size and epochs for testing purpose')
+    parser.add_argument('--exp_name', type=str, default='test',
+                        help='save several runs of an experiment in one dir')
+    parser.add_argument('--save_training', default=True,
+                        help='save checkpoints when valid_loss decreases')
+    parser.add_argument('--run_tests', type=bool, default=True,
+                        help='run best models on test data')
+    parser.add_argument('--run_tests_n', type=int, default=5,
+                        help='test the n best models on test data')
+
+
+    # Model parameters
+    parser.add_argument('--h', type=int, default=128)
+    parser.add_argument('--depth', type=int, default=8)
+    parser.add_argument('--k_size', type=int, default=9)
+    parser.add_argument('--p_size', type=int, default=7)
+    parser.add_argument('--k_dilation', type=int, default=1)
+
+    return parser.parse_args()
 
 
 def main():
@@ -44,24 +84,24 @@ def main():
 
     args.world_size = int(os.environ["WORLD_SIZE"])
     args.distributed = args.world_size > 1
-    ngpus_per_node = torch.cuda.device_count()
 
     if args.distributed:
         assert 'SLURM_PROCID' in os.environ
 
         args.rank = int(os.environ['SLURM_PROCID'])
         args.gpu = args.rank % torch.cuda.device_count()
-
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank)
+    else:
+        args.gpu = 0
+        args.rank = 0
 
     args.host = socket.gethostname()
-    print("RANKRTYPE", type(args.rank))
     args.is_master = int(args.rank) == 0
     args.id_string = f'Rank {args.rank} on {args.host}@cuda:{args.gpu}:'
 
     if args.is_master:
-        print("Configure DDP settings ...")
+        print("Configured DDP settings ...")
 
     print(f"Registered {args.id_string}.")
 
@@ -80,25 +120,6 @@ def main():
     assert os.path.isfile(args.VALID_CSV_FILE)
     assert os.path.isdir(args.PATH_TO_RUNS)
 
-    """
-    runs/
-        default/
-        serbia_summer/
-            exp1
-                /full_model_hps1/
-                    args.yml
-                    ckpts/
-                /full_model_hps2
-                    args.yml
-                    ckpts/
-            exp2
-                /full_model_hps1/
-                    args.yml
-                    ckpts/
-                /full_model_hps2
-                    args.yml
-                    ckpts/
-    """
     args.model_name = get_model_name(args)
     args.model_dir = f'{args.PATH_TO_RUNS}/{args.SPLIT}/{args.exp_name}/{args.model_name}'
     args.model_ckpt_dir = args.model_dir + '/ckpt'
@@ -115,19 +136,21 @@ def main():
         args.run_tests_n = 2
 
 
+    # Dump arguments into yaml file
     if args.is_master:
-        # Dump arguments into yaml file
-        # pprint.pprint(args.__dict__)
         with open(f'{args.model_dir}/args.yaml', 'w') as outfile:
             yaml.dump(args.__dict__, outfile, default_flow_style=False)
 
 
-    writer = SummaryWriter(log_dir=args.model_dir)# if args.is_master else None
-    run_training(args, writer)
-    # run_tests(args, writer)
-    
-    if args.is_master:
-        writer.close()
+    writer = SummaryWriter(log_dir=args.model_dir)
+    model = run_training(args, writer)
+
+    # dist.barrier()
+    if args.run_tests:
+        run_tests(args, writer, model)
+
+    writer.close()
+    dist.destroy_process_group()
 
 
 def run_training(args, writer=None):
@@ -174,14 +197,9 @@ def run_training(args, writer=None):
                               sampler=valid_sampler, drop_last=True)
 
 
-    #### Training ####
-    val_loss_min = np.inf
-    train_acc_hist = []
-    valid_acc_hist = []
-    train_loss_hist = []
-    valid_loss_hist = []
+    #### MAIN TRAINING LOOP ####
 
-    # Main training loop
+    val_loss_min = np.inf
     print(f'{args.id_string} Start main training loop.')
     for e in range(args.epochs):
 
@@ -190,11 +208,10 @@ def run_training(args, writer=None):
         if args.distributed:
             train_loader.sampler.set_epoch(e)
 
+
         ### TRAINING ###
         model.train()
         train_loss, train_acc = train_batches(train_loader, model, optimizer, args.gpu)
-        train_loss_hist.append(train_loss)
-        train_acc_hist.append(train_acc)
 
         # Log local metrics
         print(f'{args.id_string} train_loss={train_loss:.4f} train_acc={train_acc:.4f}')
@@ -222,8 +239,6 @@ def run_training(args, writer=None):
         ### VALIDATION ###
         model.eval()
         valid_loss, valid_acc = valid_batches(valid_loader, model, args.gpu)
-        valid_loss_hist.append(valid_loss)
-        valid_acc_hist.append(valid_acc)
 
         # Log local metrics
         print(f'{args.id_string} train_loss={valid_loss:.4f} train_acc={valid_acc:.4f}')
@@ -244,7 +259,6 @@ def run_training(args, writer=None):
             dist.gather(torch.tensor(valid_acc).cuda(args.gpu))
 
 
-
         # After each epoch, the master handles logging and checkpoint saving
         if args.is_master:
 
@@ -262,16 +276,14 @@ def run_training(args, writer=None):
             writer.add_scalar("Acc/valid", valid_acc, e)
         
             # Save checkpoint model if validation loss improves
-            if args.save_training and valid_loss < val_loss_min:
-                print(f'\tval_loss decreased ({val_loss_min:.6f} --> {valid_loss:.6f}). Saving this model ...')
-
+            if args.save_training and global_valid_loss < val_loss_min:
+                print(f'\tval_loss decreased ({val_loss_min:.6f} --> {global_valid_loss:.6f}). Saving this model ...')
                 p = f'{args.model_ckpt_dir}/{e+1}.ckpt'
                 torch.save(model.state_dict(), p)
                 
-                val_loss_min = valid_loss
+                val_loss_min = global_valid_loss
 
 
-    print(f'{args.id_string} Finished Training')
     if args.is_master and writer is not None:
         writer.add_hparams(args.__dict__, {'0':0.0})
 
@@ -281,11 +293,17 @@ def run_training(args, writer=None):
             torch.save(model.state_dict(), p)
 
 
+
+    print(f'{args.id_string} Finished training.')
     dist.barrier()
 
+    return model
 
-    print('\nStart testing phase.')
-    
+
+def run_tests(args, writer, model):
+
+    print(f'{args.id_string} Start testing.')
+
     ckpt_names = natsorted([Path(f).stem for f in os.listdir(args.model_ckpt_dir)])
     print("Found following (sorted!) model checkpoints:", ckpt_names)
 
@@ -297,17 +315,21 @@ def run_training(args, writer=None):
         print(f'\nLoad {args.model_ckpt_dir}/{model_name}.ckpt for testing.')
         p = f'{args.model_ckpt_dir}/{model_name}.ckpt'
 
-        model.load_state_dict(torch.load(p, map_location='cuda:' + str(args.gpu)))
+        # state_dict = torch.load(p, map_location='cuda:' + str(args.gpu))
+        # print("SATE999", state_dict['model_state_dict'].keys())
+        # model.load_state_dict(state_dict['model_state_dict'])
+        model.load_state_dict(
+            torch.load(p, map_location='cuda:' + str(args.gpu)))
+
         test_loss, test_acc = valid_batches(test_loader, model, args.gpu)
-        print(f'{model_name}.ckpt scores test_loss={test_loss:.4f} test_acc={test_acc:.4f}')
+        print(f'{model_name}.pt scores test_loss={test_loss:.4f} test_acc={test_acc:.4f}')
 
-        writer.add_scalar("Acc/test", test_acc, int(model_name))
-        writer.add_scalar("Loss/test", test_loss, int(model_name))
+        if args.is_master:
+            writer.add_scalar("Acc/test", test_acc, int(model_name))
+            writer.add_scalar("Loss/test", test_loss, int(model_name))
 
 
-    print('\nFinished testing phase.')
-
-    dist.destroy_process_group()
+    print(f'{args.id_string} Finished testing.')
 
 
 if __name__ == '__main__':

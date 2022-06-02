@@ -1,14 +1,9 @@
-import argparse
-
 import torch
-from torchmetrics import Accuracy
 from torchmetrics.functional import accuracy
-import matplotlib.pyplot as plt
 from datetime import datetime
 
 import torch.optim as optim
 import torch.nn as nn
-import torch.distributed as dist
 
 
 def train_batches(train_loader, model, optimizer, gpu):
@@ -92,89 +87,15 @@ def get_predictions_for_batch(outputs):
     Returns:
         (Tensor): transformed tensor with one-hot predictions
     """
-    
     outputs_sig = torch.sigmoid(outputs)
     predictions = torch.round(outputs_sig)
     
     return predictions
 
 
-def get_history_plots(val_loss_hist, train_loss_hist, val_acc_hist, train_acc_hist):
-    fig = plt.figure(figsize=(16,4))
-    ax = fig.add_subplot(121)
-    ax.plot(val_loss_hist, label='val')
-    ax.plot(train_loss_hist, label='train')
-    ax.legend(loc="upper right")
-    # ax.set_ylim([0, 1])
-    ax.set_title("loss")
-    ax.set_xlabel("epochs")
-
-    ax = fig.add_subplot(122)
-    ax.plot([v.cpu().detach().numpy() for v in val_acc_hist], label='val')
-    ax.plot([v.cpu().detach().numpy() for v in train_acc_hist], label='train')
-    ax.legend(loc="lower right")
-    ax.set_ylim([0, 1])
-    ax.set_title("accuracy")
-    ax.set_xlabel("epochs")
-    
-    return fig
-
-
-def _parse_args():
-    """Parse arguments and return ArgumentParser obj
-
-    Returns:
-        ArgumentParser: obj
-    """
-
-    parser = argparse.ArgumentParser(description="ConvMixer Parameters")
-
-    # DDP config
-    parser.add_argument('--dist-url', default='env://', type=str, 
-                        help='url used to set up distributed training')
-    parser.add_argument('--dist-backend', default='nccl', type=str, 
-                        help='distributed backend')
-
-    # Training parameters
-    parser.add_argument('--epochs', type=int, default=25)
-    parser.add_argument('--batch_size', type=int, default=256)
-    parser.add_argument('--ds_size', type=int, default=None)
-    parser.add_argument('--momentum', type=float, default=0.9)
-    parser.add_argument('--lr', type=float, default=0.01)
-    parser.add_argument('--optimizer', type=str, default='SGD',
-                        help='SGD or Adam') #TODO add LAMB
-    parser.add_argument('--activation', type=str, default='GELU',
-                        help='GELU or ReLU')
-
-    # Config parameters
-    parser.add_argument('--timestamp', type=str, default="",
-                        help='unix timestamp to create unique folder')
-    parser.add_argument('--dry_run', default=False,
-                        help='limit ds size and epochs for testing purpose')
-    parser.add_argument('--exp_name', type=str, default='test',
-                        help='save several runs of an experiment in one dir')
-    parser.add_argument('--save_training', default=True,
-                        help='save checkpoints when valid_loss decreases')
-    parser.add_argument('--run_tests', type=bool, default=True,
-                        help='run best models on test data')
-    parser.add_argument('--run_tests_n', type=int, default=5,
-                        help='test the n best models on test data')
-
-
-    # Model parameters
-    parser.add_argument('--h', type=int, default=128)
-    parser.add_argument('--depth', type=int, default=8)
-    parser.add_argument('--k_size', type=int, default=9)
-    parser.add_argument('--p_size', type=int, default=7)
-    parser.add_argument('--k_dilation', type=int, default=1)
-
-    return parser.parse_args()
-
-
 def get_model_name(args):
-    assert args.timestamp != ""
+    timestamp = datetime.now().strftime('%m-%d_%H%M_%S')
 
-    timestamp = datetime.utcfromtimestamp(float(args.timestamp)).strftime('%m-%d_%H%M_%S')
     model_arch = f'CvMx-h={args.h}-d={args.depth}-k={args.k_size}-p={args.p_size}'
     model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}'
 
@@ -199,3 +120,18 @@ def get_activation(activation):
     else:
         print("Error: get_activation() did not find a matching activation fn.")
         assert False
+
+
+def save_model(args, optimizer, model, e):
+
+    path = f'{args.model_ckpt_dir}/{e+1}.pt'
+    torch.save(model.state_dict(), path)
+    # torch.save({
+    #         'model_state_dict': model.state_dict(),
+    #         'optim_state_doct': optimizer.state_dict(),
+    #         'epoch': e
+    #         },
+    #         path
+    #     )
+
+    
