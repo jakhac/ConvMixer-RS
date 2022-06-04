@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 from training_utils import get_activation
 from torchmetrics.functional import accuracy
-# from torchmetrics import Accuracy, Metric
 
 
 class ConvMixerLayer(nn.Module):
@@ -40,8 +39,7 @@ class ConvMixer(nn.Module):
 
 
         # self.accuracy = Accuracy(subset_accuracy=True)
-        # self.loss = _BCEWithLogitsLoss()
-        self.loss = nn.BCEWithLogitsLoss()
+        # self.loss = nn.BCEWithLogitsLoss()
         
         # Patch embeddings as convolutions
         self.patch_embedding = nn.Sequential(

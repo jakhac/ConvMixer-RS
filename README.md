@@ -3,14 +3,16 @@ ConvMixer for remote sensing data (BigEarthNet)
 
 
 TODOs
--[ ] Predict function (convert preds to labels)
 -[x] Run tests after training
-- Try LAMB optimizer
+-[ ] LR scheduler
+-[ ] Predict function (convert preds to labels)
+-[ ] Optimzer: LAMB, AdamW, Ranger21, SGD optimizer
+-[ ] Add metrics: Recommended metrics
+-[ ] Data Augmentation: Various resizing, cropping .. (color-preserving) & mosaic
+-[ ] ResNet Transfer Learning 
 
 Questions
-- SyncBatchNorm?
+- Which loss/metrics? Which accuracy for multilabel classification?
 - Deal with imbalance - weighted sampler?
-- Which accuracy for multilabel classification?
 - Which regularization techniques?
 - Which data augmentations?
-- Usage of A100 V100s?

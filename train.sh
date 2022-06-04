@@ -6,13 +6,13 @@
 ##SBATCH --ntasks=2 		# Anzahl Prozesse P (CPU-Cores) 
 #SBATCH --cpus-per-task=1	# Anzahl CPU-Cores pro Prozess P
 
-#SBATCH --nodes=2
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2
 #SBATCH --gres=gpu:tesla:2
 #SBATCH --mem=100G          # 1GiB resident memory pro node
 
-#SBATCH --time=00:30:00 # Erwartete Laufzeit
-#SBATCH --partition=gpu_short
+#SBATCH --time=16:00:00 # Erwartete Laufzeit
+#SBATCH --partition=gpu
 
 #Job-Status per Mail:
 # #SBATCH --mail-type=NONE
@@ -24,7 +24,7 @@ source ~/miniconda3/etc/profile.d/conda.sh
 conda activate pytest102
 
 export MASTER_PORT=12340
-export WORLD_SIZE=4
+export WORLD_SIZE=2
 
 echo "NODELIST="${SLURM_NODELIST}
 master_addr=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)

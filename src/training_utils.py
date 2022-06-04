@@ -1,12 +1,23 @@
+import os
+from dotenv import load_dotenv
+from natsort import natsorted
+from pathlib import Path
+
 import torch
 from torchmetrics.functional import accuracy
 from datetime import datetime
 
 import torch.optim as optim
 import torch.nn as nn
+from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
+import torch.distributed as dist
+
+from ben_dataset import BenDataset
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
 
 
-def train_batches(train_loader, model, optimizer, gpu):
+def train_batches(train_loader, model, optimizer, criterion, gpu):
     """Perform a full training step for given batches in train_loader.
     Args:
         train_loader (DataLoader): data loader with training images
@@ -35,7 +46,7 @@ def train_batches(train_loader, model, optimizer, gpu):
                               subset_accuracy=True)
         
         # Add loss to accumulator
-        loss = model.module.loss(outputs, y)
+        loss = criterion(outputs, y)
         total_loss += loss.item()
         loss.backward()
         optimizer.step()
@@ -43,7 +54,7 @@ def train_batches(train_loader, model, optimizer, gpu):
     return (total_loss / n_batches), (total_acc / n_batches)
 
 
-def valid_batches(val_loader, model, gpu):
+def valid_batches(val_loader, model, criterion, gpu):
     """Perform validation on val_loader images.
     Args:
         val_loader (DataLoader): data loader with validation data
@@ -71,7 +82,7 @@ def valid_batches(val_loader, model, gpu):
                                   subset_accuracy=True)   
             
             # Add loss to accumulator
-            loss = model.module.loss(outputs, y)
+            loss = criterion(outputs, y)
             total_loss += loss.item()
             
 
@@ -120,4 +131,143 @@ def get_activation(activation):
     else:
         print("Error: get_activation() did not find a matching activation fn.")
         assert False
+
+
+def global_metric_avg(args, metric):
+    """Gather all metric tensors across processes and return mean.
+
+    Args:
+        args (ArgumentParser): ArgumentParser
+        metric (Tensor): Tensor to be synchronized
+
+    Returns:
+        Tensor: Mean of all tensors
+    """
+
+    global_metric = torch.ones(args.world_size, dtype=torch.float32).cuda(args.gpu)
+
+    # Process 0 stores all results in a list, remaining
+    # processes only call gather().
+    if args.is_master:
+        dist.gather(torch.tensor(metric).cuda(args.gpu),
+                    gather_list=[g.to(torch.float) for g in global_metric]) #TODO necessary?
+    else:
+        dist.gather(torch.tensor(metric).cuda(args.gpu))
+
+    return torch.mean(global_metric)
+
+
+def get_dataloader(args, csv_file, shuffle):
+    """Return a dataloader. If distributed, the dataloader uses a
+    DistributedSampler.
+
+    Args:
+        args (ArgumentParser): ArgumentParser
+        csv_file (str): Absolute path to csv file
+        shuffle (bool): True if data needs to be shuffled
+
+    Returns:
+        DataLoader: dataloader
+    """
+
+    ds = BenDataset(csv_file, args.BEN_LMDB_PATH, args.ds_size)
+
+    sampler = None
+    if args.distributed:
+        sampler = DistributedSampler(ds, shuffle=shuffle)
     
+    shuffle_in_dl = not args.distributed and shuffle
+    return DataLoader(ds, batch_size=args.batch_size, shuffle=shuffle_in_dl,
+                              sampler=sampler, drop_last=True, pin_memory=True)
+
+
+def setup_paths_and_hparams(args):
+    """Add csv and data paths to given ArgumentParser
+
+    Args:
+        args (ArgumentParser): ArgumentParser
+    """
+
+    load_dotenv('../.env')
+    args.BEN_LMDB_PATH = os.environ.get("BEN_LMDB_PATH")
+    args.TRAIN_CSV_FILE = os.environ.get("TRAIN_CSV")
+    args.VALID_CSV_FILE = os.environ.get("VAL_CSV")
+    args.TEST_CSV_FILE = os.environ.get("TEST_CSV")
+    args.PATH_TO_RUNS = os.environ.get("PATH_TO_RUNS")
+    args.SPLIT = os.environ.get("SPLIT")
+
+    assert os.path.isdir(args.BEN_LMDB_PATH)
+    assert os.path.isdir(args.PATH_TO_RUNS)
+    assert os.path.isfile(args.TRAIN_CSV_FILE)
+    assert os.path.isfile(args.VALID_CSV_FILE)
+
+    args.model_name = get_model_name(args)
+    args.model_dir = f'{args.PATH_TO_RUNS}/{args.SPLIT}/{args.exp_name}/{args.model_name}'
+    args.model_ckpt_dir = args.model_dir + '/ckpt'
+
+    os.makedirs(args.model_dir, exist_ok=True)
+    os.makedirs(args.model_ckpt_dir, exist_ok=True)
+
+
+    # Allow dry runs for quick testing purpose
+    if args.dry_run:
+        args.epochs = 8
+        args.ds_size = 100
+        args.batch_size = 1
+        args.lr = 0.1
+        args.run_tests_n = 2
+
+
+def save_checkpoint(args, model, optimizer, epoch):
+    """Save a checkpoint containing model weights, optimizer state and 
+    last finished epoch.
+
+    Args:
+        args (ArgumentParser): ArgumentParser
+        model (Model): Model
+        optimizer (Optimizer): Optimizer
+        epoch (int): Last finished epoch
+    """
+
+    p = f'{args.model_ckpt_dir}/{epoch}.ckpt'
+    torch.save({
+        'model_state': model.state_dict(),
+        'optimizer': optimizer.state_dict(),
+        'epoch': epoch},
+        p)
+
+
+def load_checkpoint(model, path, gpu, distributed):
+    """Load weights from a checkpoint into model on the specified GPU.
+    Distirbuted flag is required to consume prefixes from DDP state dicts.
+
+    Args:
+        model (Model): Model
+        path (str): path/to/file.ckpt
+        gpu (int): CUDA GPU device
+        distributed (bool): True if model that is loading weights is DDP, else false
+    """
+
+    state_dict = torch.load(path, map_location='cuda:' + str(gpu))
+
+    if distributed:
+        consume_prefix_in_state_dict_if_present(state_dict['model_state'], 'module.')
+    
+    model.load_state_dict(state_dict['model_state'])
+
+
+def get_sorted_ckpt_filenames(path):
+    """For a given path, returns a sorted list of filenames.
+
+    Args:
+        path (str): path/to/dir
+
+    Returns:
+        List[str]: List of sorted filenames
+    """
+
+    assert os.path.isdir(path)
+
+    ckpt_names = natsorted([Path(f).stem for f in os.listdir(path)])
+    print("Found following (sorted!) model checkpoints:", ckpt_names)
+    return ckpt_names
