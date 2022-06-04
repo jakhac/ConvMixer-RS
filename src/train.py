@@ -31,6 +31,8 @@ def _parse_args():
                         help='url used to set up distributed training')
     parser.add_argument('--dist-backend', default='nccl', type=str, 
                         help='distributed backend')
+    parser.add_argument('--num_nodes', default='1', type=int, 
+                        help='number of available nodes')
 
     # Training parameters
     parser.add_argument('--epochs', type=int, default=25)
@@ -71,8 +73,7 @@ def main():
     args = _parse_args()
 
     ### DDP settings ###
-    assert 'WORLD_SIZE' in os.environ
-    args.world_size = int(os.environ["WORLD_SIZE"])
+    args.world_size = args.num_nodes * 2 # every node TUB slurm cluster as 2 GPU devices
     args.distributed = args.world_size > 1
 
     if args.distributed:
@@ -91,10 +92,9 @@ def main():
     args.is_master = int(args.rank) == 0
     args.id_string = f'Rank {args.rank} on {args.host}@cuda:{args.gpu}:'
 
+    print(f"Register: {args.id_string}")
     if args.is_master:
-        print("Configured DDP settings ...")
-
-    print(f"Register: {args.id_string}.")
+        print(f"Configured DDP settings for {args.num_nodes} nodes with 2 GPUs each ...")
 
 
     #### Path and further hparams settings ###
