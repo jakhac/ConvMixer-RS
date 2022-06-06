@@ -11,9 +11,10 @@
 #SBATCH --gres=gpu:tesla:2
 #SBATCH --mem=100G          # 1GiB resident memory pro node
 #SBATCH --cpus-per-task=1	# Anzahl CPU-Cores pro Prozess P
+###SBATCH --mem-per-cpu=8G
 
 #SBATCH --time=16:00:00 # Erwartete Laufzeit
-#SBATCH --partition=gpu
+#SBATCH --partition=gpu_short
 
 #Job-Status per Mail:
 # #SBATCH --mail-type=NONE

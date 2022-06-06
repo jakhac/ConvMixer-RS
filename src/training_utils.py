@@ -1,11 +1,15 @@
 import os
+from pydoc import apropos
 from dotenv import load_dotenv
 from natsort import natsorted
 from pathlib import Path
+import numpy as np
 
 import torch
 from torchmetrics.functional import accuracy
 from datetime import datetime
+
+from sklearn.metrics import average_precision_score, f1_score, precision_score
 
 import torch.optim as optim
 import torch.nn as nn
@@ -28,30 +32,36 @@ def train_batches(train_loader, model, optimizer, criterion, gpu):
     Returns:
         (float, float): (loss, accuracy) for this data_loader
     """
-    
+
     total_acc = 0.0
     total_loss = 0.0
     n_batches = len(train_loader)
-    print('train n_batches', n_batches)
+    yyhat_tuples = []
+
+    print(f'Train on {n_batches} (overall) batches')
 
     model.train()
     for X, y in train_loader:
         X, y = X.cuda(gpu), y.cuda(gpu)
         optimizer.zero_grad()
-        outputs = model(X)
-        
-        # Keep track of accuracy in this epoch
-        y_pred = get_predictions_for_batch(outputs)
-        total_acc += accuracy(y_pred.to(torch.int), y.to(torch.int),
-                              subset_accuracy=True)
-        
-        # Add loss to accumulator
-        loss = criterion(outputs, y)
+
+        y_hat = model(X)
+
+        ### METRICS ###
+        y_hat_sigmoid = torch.sigmoid(y_hat)
+        yyhat_tuples += zip(y.cpu().detach().numpy(), y_hat_sigmoid.cpu().detach().numpy())
+
+        # Accuracy
+        y_predictions = torch.round(y_hat_sigmoid)
+        total_acc += accuracy(y_predictions.to(torch.int), y.to(torch.int), subset_accuracy=True)
+
+        # Loss
+        loss = criterion(y_hat, y)
         total_loss += loss.item()
         loss.backward()
         optimizer.step()
-        
-    return (total_loss / n_batches), (total_acc / n_batches)
+
+    return (total_loss / n_batches), (total_acc / n_batches), np.asarray(yyhat_tuples)
 
 
 def valid_batches(val_loader, model, criterion, gpu):
@@ -69,24 +79,30 @@ def valid_batches(val_loader, model, criterion, gpu):
     n_batches = len(val_loader)
     total_loss = 0.0
     total_acc = 0.0
+    yyhat_tuples = []
+
+    print(f'Train on {n_batches} (overall) batches')
     
     model.eval()
     with torch.no_grad():
         for X, y in val_loader:
             X, y = X.cuda(gpu), y.cuda(gpu)
-            outputs = model(X)
-            
-            # Keep track of accuracy in this epoch
-            y_pred = get_predictions_for_batch(outputs)
-            total_acc += accuracy(y_pred.to(torch.int), y.to(torch.int),
+            y_hat = model(X)
+
+            y_hat_sigmoid = torch.sigmoid(y_hat)
+            yyhat_tuples += zip(y.cpu().detach().numpy(), y_hat_sigmoid.cpu().detach().numpy())
+
+            # Accuracy
+            y_predictions = torch.round(y_hat_sigmoid)
+            total_acc += accuracy(y_predictions.to(torch.int), y.to(torch.int),
                                   subset_accuracy=True)   
             
             # Add loss to accumulator
-            loss = criterion(outputs, y)
+            loss = criterion(y_hat, y)
             total_loss += loss.item()
             
 
-    return (total_loss / n_batches), (total_acc / n_batches)
+    return (total_loss / n_batches), (total_acc / n_batches), yyhat_tuples
 
 
 def get_predictions_for_batch(outputs):
@@ -118,6 +134,8 @@ def get_optimizer(model, args):
         return optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     elif args.optimizer == 'Adam':
         return optim.Adam(model.parameters(), lr=args.lr)
+    elif args.optimizer == 'AdamW':
+        return optim.AdamW(model.parameters(), lr=args.lr)
     else:
         print("Error: get_optimizer() did not find a matching optimizer.")
         assert False
@@ -131,6 +149,20 @@ def get_activation(activation):
     else:
         print("Error: get_activation() did not find a matching activation fn.")
         assert False
+
+
+def get_global_yyhat(args, samples_per_gpu, yyhat):
+
+
+    global_yyhat = torch.zeros((args.world_size, samples_per_gpu, 2, 19), dtype=torch.float32).cuda(args.gpu)
+    yyhat = np.array(yyhat) # Faster, according to pytorch user warning
+
+    if args.is_master:
+        dist.gather(torch.tensor(yyhat).cuda(args.gpu), [g.to(torch.float32) for g in global_yyhat], dst=0)
+    else:
+        dist.gather(torch.tensor(yyhat).cuda(args.gpu), dst=0)
+
+    return global_yyhat
 
 
 def global_metric_avg(args, metric):
@@ -150,7 +182,7 @@ def global_metric_avg(args, metric):
     # processes only call gather().
     if args.is_master:
         dist.gather(torch.tensor(metric).cuda(args.gpu),
-                    gather_list=[g.to(torch.float) for g in global_metric]) #TODO necessary?
+                    gather_list=[g.to(torch.float) for g in global_metric]) # ??
     else:
         dist.gather(torch.tensor(metric).cuda(args.gpu))
 
@@ -174,8 +206,9 @@ def get_dataloader(args, csv_file, shuffle):
 
     sampler = None
     if args.distributed:
-        sampler = DistributedSampler(ds, shuffle=shuffle)
+        sampler = DistributedSampler(ds, shuffle=shuffle, drop_last=True)
     
+
     shuffle_in_dl = not args.distributed and shuffle
     return DataLoader(ds, batch_size=args.batch_size, shuffle=shuffle_in_dl,
                               sampler=sampler, drop_last=True, pin_memory=True)
@@ -208,12 +241,12 @@ def setup_paths_and_hparams(args):
     os.makedirs(args.model_dir, exist_ok=True)
     os.makedirs(args.model_ckpt_dir, exist_ok=True)
 
-
+    # TODO flag
     # Allow dry runs for quick testing purpose
     if args.dry_run:
-        args.epochs = 8
+        args.epochs = 2
         args.ds_size = 100
-        args.batch_size = 1
+        args.batch_size = 10
         args.lr = 0.1
         args.run_tests_n = 2
 

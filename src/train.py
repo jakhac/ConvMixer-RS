@@ -1,3 +1,5 @@
+import cmath
+from functools import total_ordering
 import os
 from re import M
 import yaml
@@ -8,6 +10,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+
+from sklearn.metrics import confusion_matrix
 
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -41,7 +45,7 @@ def _parse_args():
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--lr', type=float, default=0.01)
     parser.add_argument('--optimizer', type=str, default='SGD',
-                        help='SGD or Adam')
+                        help='one of \'SGD\', \'Adam\', \'AdamW\'')
     parser.add_argument('--activation', type=str, default='GELU',
                         help='GELU or ReLU')
 
@@ -127,7 +131,7 @@ def run_training(args, writer):
         10,
         args.h,
         args.depth,
-        kernel_size=args.k_size, 
+        kernel_size=args.k_size,
         patch_size=args.p_size,
         n_classes=19, 
         activation=args.activation
@@ -157,6 +161,10 @@ def run_training(args, writer):
     train_loader = get_dataloader(args, args.TRAIN_CSV_FILE, shuffle=True)
     valid_loader = get_dataloader(args, args.VALID_CSV_FILE, shuffle=True)
 
+    trainsamples_per_gpu = args.batch_size * len(train_loader)
+    validsamples_per_gpu = args.batch_size * len(valid_loader)
+    print("Train samples per GPU", trainsamples_per_gpu)
+    print("Valid samples per GPU", validsamples_per_gpu)
 
     #### MAIN TRAINING LOOP ####
     val_loss_min = np.inf
@@ -172,40 +180,52 @@ def run_training(args, writer):
 
         ### TRAINING ###
         model.train()
-        train_loss, train_acc = train_batches(train_loader, model, optimizer, criterion, args.gpu)
+        train_loss, train_acc, yyhat = train_batches(train_loader, model, optimizer, criterion, args.gpu)
 
-        # Log all metrics per process
-        print(f'{args.id_string} train_loss={train_loss:.4f} train_acc={train_acc:.4f}')
-        writer.add_scalar(f"Per-GPU-Loss/train_gpu{args.rank}", train_loss, e)
-        writer.add_scalar(f"Per-GPU-Acc/train_gpu{args.rank}", train_acc, e)
-
-        # Gather global metrics to log average later
         global_train_loss = global_metric_avg(args, train_loss)
         global_train_acc = global_metric_avg(args, train_acc)
+        global_train_yyhat = get_global_yyhat(args, trainsamples_per_gpu, yyhat)
 
 
         ### VALIDATION ###
         model.eval()
-        valid_loss, valid_acc = valid_batches(valid_loader, model, criterion, args.gpu)
-
-        print(f'{args.id_string} valid_loss={valid_loss:.4f} valid_acc={valid_acc:.4f}')
-        writer.add_scalar(f"Per-GPU-Loss/valid_gpu{args.rank}", valid_loss, e)
-        writer.add_scalar(f"Per-GPU-Acc/valid_gpu{args.rank}", valid_acc, e)
+        valid_loss, valid_acc, yyhat = valid_batches(valid_loader, model, criterion, args.gpu)
 
         global_valid_loss = global_metric_avg(args, valid_loss)
         global_valid_acc = global_metric_avg(args, valid_acc)
+        global_valid_yyhat = get_global_yyhat(args, validsamples_per_gpu, yyhat)
 
 
         ### Logging ###
         # After each epoch, the master handles logging and checkpoint-saving
         if args.is_master:
+
+            metric_dict = {'train': global_train_yyhat, 'valid': global_valid_yyhat}
+            for n, v in metric_dict.items():
+
+                v = v.cpu().detach().numpy()
+                v = np.concatenate((v), axis=0)
+
+                writer.add_scalar(f"mAP-micro/{n}", average_precision_score(v[:, 0, :], v[:, 1, :], average='micro'), e)
+                writer.add_scalar(f"mAP-macro/{n}", average_precision_score(v[:, 0, :], v[:, 1, :], average='macro'), e)
+                print(f"mAP-micro/{n}", average_precision_score(v[:, 0, :], v[:, 1, :], average='micro'), e)
+                print(f"mAP-macro/{n}", average_precision_score(v[:, 0, :], v[:, 1, :], average='macro'), e)
+                print(f'AP_class', average_precision_score(v[:, 0, :], v[:, 1, :], average=None))
+
+                writer.add_scalar(f"F1-micro/{n}", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='micro'), e)
+                writer.add_scalar(f"F1-macro/{n}", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='macro'), e)
+                print(f"F1-micro/{n}", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='micro'), e)
+                print(f"F1-macro/{n}", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='macro'), e)
+                print(f'F1_class', f1_score(v[:, 0, :], np.round(v[:, 1, :]), average=None))
+
+
             print(f'Epoch {e} train_loss={global_train_loss:.4f} train_acc={global_train_acc:.4f}')
-            print(f'Epoch {e} val_loss={global_valid_loss:.4f} val_acc={global_valid_acc:.4f}')
+            print(f'Epoch {e} valid_loss={global_valid_loss:.4f} valid_acc={global_valid_acc:.4f}')
 
             writer.add_scalar("Loss/train", global_train_loss, e)
             writer.add_scalar("Loss/valid", global_valid_loss, e)
             writer.add_scalar("Acc/train", global_train_acc, e)
-            writer.add_scalar("Acc/valid", valid_acc, e)
+            writer.add_scalar("Acc/valid", global_valid_acc, e)
 
             # Save checkpoint model if validation loss improves
             if args.save_training and global_valid_loss.item() < val_loss_min:
@@ -262,16 +282,29 @@ def run_tests(args, writer):
         p = f'{args.model_ckpt_dir}/{model_name}.ckpt'
         load_checkpoint(model, p, args.gpu, args.distributed)
 
-        test_loss, test_acc = valid_batches(test_loader, model, criterion, args.gpu)
+        test_loss, test_acc, yyhat = valid_batches(test_loader, model, criterion, args.gpu)
         print(f'{model_name}.pt scores test_loss={test_loss:.4f} test_acc={test_acc:.4f}')
 
         if args.is_master:
-            writer.add_scalar("Acc/test", test_acc, int(model_name))
-            writer.add_scalar("Loss/test", test_loss, int(model_name))
+            e = int(model_name)
+            v = np.asarray(yyhat)
+
+            writer.add_scalar(f"mAP-micro/test", average_precision_score(v[:, 0, :], v[:, 1, :], average='micro'), e)
+            writer.add_scalar(f"mAP-macro/test", average_precision_score(v[:, 0, :], v[:, 1, :], average='macro'), e)
+            print(f"mAP-micro/test", average_precision_score(v[:, 0, :], v[:, 1, :], average='micro'), e)
+            print(f"mAP-macro/test", average_precision_score(v[:, 0, :], v[:, 1, :], average='macro'), e)
+            # print('AP_class', average_precision_score(v[:, 0, :], v[:, 1, :], average=None))
+
+            writer.add_scalar(f"F1-micro/test", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='micro'), e)
+            writer.add_scalar(f"F1-macro/test", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='macro'), e)
+            print(f"F1-micro/test", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='micro'), e)
+            print(f"F1-macro/test", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='macro'), e)
+
+            writer.add_scalar("Acc/test", test_acc, e)
+            writer.add_scalar("Loss/test", test_loss, e)
 
 
     print(f'{args.id_string} Finished testing.')
-
 
 
 
