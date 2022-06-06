@@ -10,8 +10,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-
-from sklearn.metrics import confusion_matrix
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -44,11 +43,17 @@ def _parse_args():
     parser.add_argument('--ds_size', type=int, default=None)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--lr', type=float, default=0.01)
+    parser.add_argument('--lr_patience', type=int, default='4',
+                        help='epochs to wait for improvement before lr reduction')
+    parser.add_argument('--lr_thresh', type=float, default='0.001',
+                        help='lr delta that is seen as improvement')
+    parser.add_argument('--lr_factor', type=float, default='0.4',
+                        help='lr reduction factor')
     parser.add_argument('--optimizer', type=str, default='SGD',
-                        help='one of \'SGD\', \'Adam\', \'AdamW\'')
+                        help='one of \'SGD\', \'Adam\', \'AdamW\', \'Ranger21\'')
     parser.add_argument('--activation', type=str, default='GELU',
                         help='GELU or ReLU')
-
+        
     # Config parameters
     parser.add_argument('--dry_run', default=False,
                         help='limit ds size and epochs for testing purpose')
@@ -126,6 +131,10 @@ def run_training(args, writer):
     print(f"{args.id_string} Start training ...")
     torch.manual_seed(42)
 
+    ### Configure dataloaders ###
+    train_loader = get_dataloader(args, args.TRAIN_CSV_FILE, shuffle=True)
+    valid_loader = get_dataloader(args, args.VALID_CSV_FILE, shuffle=True)
+
     ### Create model and move to GPU(s) ###
     model = ConvMixer(
         10,
@@ -133,10 +142,10 @@ def run_training(args, writer):
         args.depth,
         kernel_size=args.k_size,
         patch_size=args.p_size,
-        n_classes=19, 
+        n_classes=19,
         activation=args.activation
     )
-    optimizer = get_optimizer(model, args)
+    optimizer = get_optimizer(model, args, len(train_loader))
     criterion = nn.BCEWithLogitsLoss()
 
     args.n_params = sum(p.numel() for p in model.parameters())
@@ -157,14 +166,13 @@ def run_training(args, writer):
         torch.cuda.set_device(args.gpu)
         model.cuda()
 
-    ### Configure dataloaders ###
-    train_loader = get_dataloader(args, args.TRAIN_CSV_FILE, shuffle=True)
-    valid_loader = get_dataloader(args, args.VALID_CSV_FILE, shuffle=True)
+    n_train_per_gpu = args.batch_size * len(train_loader)
+    n_valid_per_gpu = args.batch_size * len(valid_loader)
+    print("Train samples per GPU", n_train_per_gpu)
+    print("Valid samples per GPU", n_valid_per_gpu)
 
-    trainsamples_per_gpu = args.batch_size * len(train_loader)
-    validsamples_per_gpu = args.batch_size * len(valid_loader)
-    print("Train samples per GPU", trainsamples_per_gpu)
-    print("Valid samples per GPU", validsamples_per_gpu)
+    scheduler = ReduceLROnPlateau(optimizer, 'min', patience=args.lr_patience, 
+                                  factor=args.lr_factor, verbose=True, threshold=args.lr_thresh)
 
     #### MAIN TRAINING LOOP ####
     val_loss_min = np.inf
@@ -180,63 +188,38 @@ def run_training(args, writer):
 
         ### TRAINING ###
         model.train()
-        train_loss, train_acc, yyhat = train_batches(train_loader, model, optimizer, criterion, args.gpu)
+        loss, acc, yyhat = train_batches(train_loader, model, optimizer, criterion, args.gpu)
 
-        global_train_loss = global_metric_avg(args, train_loss)
-        global_train_acc = global_metric_avg(args, train_acc)
-        global_train_yyhat = get_global_yyhat(args, trainsamples_per_gpu, yyhat)
+        global_loss = global_metric_avg(args, loss)
+        global_acc = global_metric_avg(args, acc)
+        global_yyhat = get_global_yyhat(args, n_train_per_gpu, yyhat)
+
+        write_metrics(writer, 'train', global_yyhat, global_loss, global_acc, e)
 
 
         ### VALIDATION ###
         model.eval()
-        valid_loss, valid_acc, yyhat = valid_batches(valid_loader, model, criterion, args.gpu)
+        loss, acc, yyhat = valid_batches(valid_loader, model, criterion, args.gpu)
 
-        global_valid_loss = global_metric_avg(args, valid_loss)
-        global_valid_acc = global_metric_avg(args, valid_acc)
-        global_valid_yyhat = get_global_yyhat(args, validsamples_per_gpu, yyhat)
+        global_loss = global_metric_avg(args, loss)
+        global_acc = global_metric_avg(args, acc)
+        global_yyhat = get_global_yyhat(args, n_valid_per_gpu, yyhat)
 
+        write_metrics(writer, 'valid', global_yyhat, global_loss, global_acc, e)
 
-        ### Logging ###
-        # After each epoch, the master handles logging and checkpoint-saving
-        if args.is_master:
+        ### HPARAM CONFIG ###
+        if args.optimizer != 'Ranger21':
+            scheduler.step(global_loss)
 
-            metric_dict = {'train': global_train_yyhat, 'valid': global_valid_yyhat}
-            for n, v in metric_dict.items():
-
-                v = v.cpu().detach().numpy()
-                v = np.concatenate((v), axis=0)
-
-                writer.add_scalar(f"mAP-micro/{n}", average_precision_score(v[:, 0, :], v[:, 1, :], average='micro'), e)
-                writer.add_scalar(f"mAP-macro/{n}", average_precision_score(v[:, 0, :], v[:, 1, :], average='macro'), e)
-                print(f"mAP-micro/{n}", average_precision_score(v[:, 0, :], v[:, 1, :], average='micro'), e)
-                print(f"mAP-macro/{n}", average_precision_score(v[:, 0, :], v[:, 1, :], average='macro'), e)
-                print(f'AP_class', average_precision_score(v[:, 0, :], v[:, 1, :], average=None))
-
-                writer.add_scalar(f"F1-micro/{n}", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='micro'), e)
-                writer.add_scalar(f"F1-macro/{n}", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='macro'), e)
-                print(f"F1-micro/{n}", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='micro'), e)
-                print(f"F1-macro/{n}", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='macro'), e)
-                print(f'F1_class', f1_score(v[:, 0, :], np.round(v[:, 1, :]), average=None))
-
-
-            print(f'Epoch {e} train_loss={global_train_loss:.4f} train_acc={global_train_acc:.4f}')
-            print(f'Epoch {e} valid_loss={global_valid_loss:.4f} valid_acc={global_valid_acc:.4f}')
-
-            writer.add_scalar("Loss/train", global_train_loss, e)
-            writer.add_scalar("Loss/valid", global_valid_loss, e)
-            writer.add_scalar("Acc/train", global_train_acc, e)
-            writer.add_scalar("Acc/valid", global_valid_acc, e)
-
-            # Save checkpoint model if validation loss improves
-            if args.save_training and global_valid_loss.item() < val_loss_min:
-                print(f'\tval_loss decreased ({val_loss_min:.6f} --> {global_valid_loss:.6f}). Saving this model ...')
-                save_checkpoint(args, model, optimizer, e+1)
-                val_loss_min = global_valid_loss
+        ### CHECKPOINT ###
+        if (args.is_master and args.save_training and 
+                global_loss.item() < val_loss_min):
+            print(f'\tval_loss decreased ({val_loss_min:.6f} --> {global_loss:.6f}). Saving this model ...')
+            save_checkpoint(args, model, optimizer, e+1)
+            val_loss_min = global_loss
 
 
     if args.is_master:
-
-        # TODO Add losses, accs, etc to dict
         args.val_loss_min = val_loss_min.item()
         writer.add_hparams(args.__dict__, {'Zero':0.0})
 
@@ -263,45 +246,28 @@ def run_tests(args, writer):
         10,
         args.h,
         args.depth,
-        kernel_size=args.k_size, 
+        kernel_size=args.k_size,
         patch_size=args.p_size,
         n_classes=19,
         activation=args.activation
     ).cuda(args.gpu)
     criterion = nn.BCEWithLogitsLoss()
 
-    test_loader = get_dataloader(args, args.TEST_CSV_FILE, False)
+    test_loader = get_dataloader(args, args.TEST_CSV_FILE, False, distribute=False)
     ckpt_names = get_sorted_ckpt_filenames(args.model_ckpt_dir)
     model_names = list(reversed(ckpt_names))[:args.run_tests_n]
-
     print(f'Following epochs are tested: {model_names}')
 
-    # Forward testdata and compute metrics 
-    # for top-{args.run_tests_n} models
     for model_name in model_names:
         p = f'{args.model_ckpt_dir}/{model_name}.ckpt'
         load_checkpoint(model, p, args.gpu, args.distributed)
 
-        test_loss, test_acc, yyhat = valid_batches(test_loader, model, criterion, args.gpu)
-        print(f'{model_name}.pt scores test_loss={test_loss:.4f} test_acc={test_acc:.4f}')
+        loss, acc, yyhat = valid_batches(test_loader, model, criterion, args.gpu)
+        print(f'{model_name}.pt scores test_loss={loss:.4f} test_acc={acc:.4f}')
 
         if args.is_master:
             e = int(model_name)
-            v = np.asarray(yyhat)
-
-            writer.add_scalar(f"mAP-micro/test", average_precision_score(v[:, 0, :], v[:, 1, :], average='micro'), e)
-            writer.add_scalar(f"mAP-macro/test", average_precision_score(v[:, 0, :], v[:, 1, :], average='macro'), e)
-            print(f"mAP-micro/test", average_precision_score(v[:, 0, :], v[:, 1, :], average='micro'), e)
-            print(f"mAP-macro/test", average_precision_score(v[:, 0, :], v[:, 1, :], average='macro'), e)
-            # print('AP_class', average_precision_score(v[:, 0, :], v[:, 1, :], average=None))
-
-            writer.add_scalar(f"F1-micro/test", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='micro'), e)
-            writer.add_scalar(f"F1-macro/test", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='macro'), e)
-            print(f"F1-micro/test", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='micro'), e)
-            print(f"F1-macro/test", f1_score(v[:, 0, :], np.round(v[:, 1, :]), average='macro'), e)
-
-            writer.add_scalar("Acc/test", test_acc, e)
-            writer.add_scalar("Loss/test", test_loss, e)
+            write_metrics(writer, 'test', yyhat, loss, acc, e, from_gpu=False)
 
 
     print(f'{args.id_string} Finished testing.')

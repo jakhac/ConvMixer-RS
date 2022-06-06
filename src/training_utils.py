@@ -11,6 +11,7 @@ from datetime import datetime
 
 from sklearn.metrics import average_precision_score, f1_score, precision_score
 
+from ranger21 import Ranger21
 import torch.optim as optim
 import torch.nn as nn
 from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
@@ -37,8 +38,6 @@ def train_batches(train_loader, model, optimizer, criterion, gpu):
     total_loss = 0.0
     n_batches = len(train_loader)
     yyhat_tuples = []
-
-    print(f'Train on {n_batches} (overall) batches')
 
     model.train()
     for X, y in train_loader:
@@ -81,8 +80,6 @@ def valid_batches(val_loader, model, criterion, gpu):
     total_acc = 0.0
     yyhat_tuples = []
 
-    print(f'Train on {n_batches} (overall) batches')
-    
     model.eval()
     with torch.no_grad():
         for X, y in val_loader:
@@ -129,13 +126,17 @@ def get_model_name(args):
     return f'{timestamp}_{model_arch}_{model_config}'
 
 
-def get_optimizer(model, args):
+def get_optimizer(model, args, n_batches_per_e=None):
     if args.optimizer == 'SGD':
         return optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     elif args.optimizer == 'Adam':
         return optim.Adam(model.parameters(), lr=args.lr)
     elif args.optimizer == 'AdamW':
         return optim.AdamW(model.parameters(), lr=args.lr)
+    elif args.optimizer == 'Ranger21':
+        assert n_batches_per_e
+        return Ranger21(model.parameters(), lr=args.lr, 
+                        num_epochs=args.epochs, num_batches_per_epoch=n_batches_per_e)
     else:
         print("Error: get_optimizer() did not find a matching optimizer.")
         assert False
@@ -189,7 +190,7 @@ def global_metric_avg(args, metric):
     return torch.mean(global_metric)
 
 
-def get_dataloader(args, csv_file, shuffle):
+def get_dataloader(args, csv_file, shuffle, distribute=True):
     """Return a dataloader. If distributed, the dataloader uses a
     DistributedSampler.
 
@@ -197,6 +198,7 @@ def get_dataloader(args, csv_file, shuffle):
         args (ArgumentParser): ArgumentParser
         csv_file (str): Absolute path to csv file
         shuffle (bool): True if data needs to be shuffled
+        shuffle (bool): True if data is distributed across multiple devices (false for testing!)
 
     Returns:
         DataLoader: dataloader
@@ -205,11 +207,11 @@ def get_dataloader(args, csv_file, shuffle):
     ds = BenDataset(csv_file, args.BEN_LMDB_PATH, args.ds_size)
 
     sampler = None
-    if args.distributed:
+    if distribute:
         sampler = DistributedSampler(ds, shuffle=shuffle, drop_last=True)
     
 
-    shuffle_in_dl = not args.distributed and shuffle
+    shuffle_in_dl = not distribute and shuffle
     return DataLoader(ds, batch_size=args.batch_size, shuffle=shuffle_in_dl,
                               sampler=sampler, drop_last=True, pin_memory=True)
 
@@ -241,7 +243,6 @@ def setup_paths_and_hparams(args):
     os.makedirs(args.model_dir, exist_ok=True)
     os.makedirs(args.model_ckpt_dir, exist_ok=True)
 
-    # TODO flag
     # Allow dry runs for quick testing purpose
     if args.dry_run:
         args.epochs = 2
@@ -304,3 +305,37 @@ def get_sorted_ckpt_filenames(path):
     ckpt_names = natsorted([Path(f).stem for f in os.listdir(path)])
     print("Found following (sorted!) model checkpoints:", ckpt_names)
     return ckpt_names
+
+
+def write_metrics(writer, tag, yy_hat, loss, acc, e, from_gpu=True):
+
+    if from_gpu:
+        yy_hat = yy_hat.cpu().detach().numpy()
+        yy_hat = np.concatenate((yy_hat), axis=0)
+    else:
+        yy_hat = np.asarray(yy_hat)
+
+    y = yy_hat[:, 0, :]
+    y_hat_sig = yy_hat[:, 1, :]
+
+    # mAP
+    writer.add_scalar(f"mAP-micro/{tag}", average_precision_score(y, y_hat_sig, average='micro'))
+    writer.add_scalar(f"mAP-macro/{tag}", average_precision_score(y, y_hat_sig, average='macro'))
+    print(f"mAP-micro/{tag} {average_precision_score(y, y_hat_sig, average='micro'):.4f}")
+    print(f"mAP-macro/{tag} {average_precision_score(y, y_hat_sig, average='macro'):.4f}")
+    print(f"AP_class/{tag} {average_precision_score(y, y_hat_sig, average=None)}")
+
+    # F1
+    writer.add_scalar(f"F1-micro/{tag}", f1_score(y, np.round(y_hat_sig), average='micro'))
+    writer.add_scalar(f"F1-macro/{tag}", f1_score(y, np.round(y_hat_sig), average='macro'))
+    print(f"F1-micro/{tag} {f1_score(y, np.round(y_hat_sig), average='micro'):.4f}")
+    print(f"F1-macro/{tag} {f1_score(y, np.round(y_hat_sig), average='macro'):.4f}")
+    print(f"F1-class/{tag} {f1_score(y, np.round(y_hat_sig), average=None)}")
+
+    # Loss
+    writer.add_scalar(f"Loss/{tag}", loss, e)
+    print(f"Loss/{tag} {loss:.4f}")
+    
+    # Accuracy
+    writer.add_scalar(f"Acc/{tag}", acc, e)
+    print(f"Acc/{tag} {acc:.4f}")
