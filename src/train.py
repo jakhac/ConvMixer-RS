@@ -188,35 +188,35 @@ def run_training(args, writer):
 
         ### TRAINING ###
         model.train()
-        loss, acc, yyhat = train_batches(train_loader, model, optimizer, criterion, args.gpu)
+        loss, acc, train_yyhat = train_batches(train_loader, model, optimizer, criterion, args.gpu)
 
-        global_loss = global_metric_avg(args, loss)
-        global_acc = global_metric_avg(args, acc)
-        global_yyhat = get_global_yyhat(args, n_train_per_gpu, yyhat)
+        global_train_loss = global_metric_avg(args, loss)
+        global_train_acc = global_metric_avg(args, acc)
+        global_train_yyhat = get_global_yyhat(args, n_train_per_gpu, train_yyhat)
 
-        write_metrics(writer, 'train', global_yyhat, global_loss, global_acc, e)
+        write_metrics(writer, 'train', global_train_yyhat, global_train_loss, global_train_acc, e)
 
 
         ### VALIDATION ###
         model.eval()
-        loss, acc, yyhat = valid_batches(valid_loader, model, criterion, args.gpu)
+        loss, acc, valid_yyhat = valid_batches(valid_loader, model, criterion, args.gpu)
 
-        global_loss = global_metric_avg(args, loss)
-        global_acc = global_metric_avg(args, acc)
-        global_yyhat = get_global_yyhat(args, n_valid_per_gpu, yyhat)
+        global_valid_loss = global_metric_avg(args, loss)
+        global_valid_acc = global_metric_avg(args, acc)
+        global_valid_yyhat = get_global_yyhat(args, n_valid_per_gpu, valid_yyhat)
 
-        write_metrics(writer, 'valid', global_yyhat, global_loss, global_acc, e)
+        write_metrics(writer, 'valid', global_valid_yyhat, global_valid_loss, global_valid_acc, e)
 
         ### HPARAM CONFIG ###
         if args.optimizer != 'Ranger21':
-            scheduler.step(global_loss)
+            scheduler.step(global_valid_loss)
 
         ### CHECKPOINT ###
         if (args.is_master and args.save_training and 
-                global_loss.item() < val_loss_min):
-            print(f'\tval_loss decreased ({val_loss_min:.6f} --> {global_loss:.6f}). Saving this model ...')
+                global_valid_loss.item() < val_loss_min):
+            print(f'\tval_loss decreased ({val_loss_min:.6f} --> {global_valid_loss:.6f}). Saving this model ...')
             save_checkpoint(args, model, optimizer, e+1)
-            val_loss_min = global_loss
+            val_loss_min = global_valid_loss
 
 
     if args.is_master:

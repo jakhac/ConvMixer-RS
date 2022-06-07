@@ -245,7 +245,7 @@ def setup_paths_and_hparams(args):
 
     # Allow dry runs for quick testing purpose
     if args.dry_run:
-        args.epochs = 2
+        args.epochs = 2 
         args.ds_size = 100
         args.batch_size = 10
         args.lr = 0.1
@@ -319,15 +319,15 @@ def write_metrics(writer, tag, yy_hat, loss, acc, e, from_gpu=True):
     y_hat_sig = yy_hat[:, 1, :]
 
     # mAP
-    writer.add_scalar(f"mAP-micro/{tag}", average_precision_score(y, y_hat_sig, average='micro'))
-    writer.add_scalar(f"mAP-macro/{tag}", average_precision_score(y, y_hat_sig, average='macro'))
+    writer.add_scalar(f"mAP-micro/{tag}", average_precision_score(y, y_hat_sig, average='micro'), e)
+    writer.add_scalar(f"mAP-macro/{tag}", average_precision_score(y, y_hat_sig, average='macro'), e)
     print(f"mAP-micro/{tag} {average_precision_score(y, y_hat_sig, average='micro'):.4f}")
     print(f"mAP-macro/{tag} {average_precision_score(y, y_hat_sig, average='macro'):.4f}")
     print(f"AP_class/{tag} {average_precision_score(y, y_hat_sig, average=None)}")
 
     # F1
-    writer.add_scalar(f"F1-micro/{tag}", f1_score(y, np.round(y_hat_sig), average='micro'))
-    writer.add_scalar(f"F1-macro/{tag}", f1_score(y, np.round(y_hat_sig), average='macro'))
+    writer.add_scalar(f"F1-micro/{tag}", f1_score(y, np.round(y_hat_sig), average='micro'), e)
+    writer.add_scalar(f"F1-macro/{tag}", f1_score(y, np.round(y_hat_sig), average='macro'), e)
     print(f"F1-micro/{tag} {f1_score(y, np.round(y_hat_sig), average='micro'):.4f}")
     print(f"F1-macro/{tag} {f1_score(y, np.round(y_hat_sig), average='macro'):.4f}")
     print(f"F1-class/{tag} {f1_score(y, np.round(y_hat_sig), average=None)}")
