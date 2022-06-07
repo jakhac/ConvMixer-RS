@@ -6,10 +6,9 @@ from pathlib import Path
 import numpy as np
 
 import torch
-from torchmetrics.functional import accuracy
 from datetime import datetime
 
-from sklearn.metrics import average_precision_score, f1_score, precision_score, accuracy_score
+from sklearn.metrics import average_precision_score, f1_score, accuracy_score
 
 from ranger21 import Ranger21
 import torch.optim as optim
@@ -24,15 +23,14 @@ from torch.utils.data.distributed import DistributedSampler
 
 
 def train_batches(train_loader, model, optimizer, criterion):
-    """Perform a full training step for given batches in train_loader.
+    """Perform a training step.
     Args:
         train_loader (DataLoader): data loader with training images
         model (Model): model
         optimizer (optimizer): optimizer
-        loss_fn (criterion): loss function
-        accuracy (accuracy): accuracy object
+        criterion (criterion): loss functin
     Returns:
-        (float, float): (loss, accuracy) for this data_loader
+        float, List[(y, y_hat)]: loss and label-output tuples
     """
 
     # total_acc = 0.0
@@ -47,7 +45,8 @@ def train_batches(train_loader, model, optimizer, criterion):
 
         y_hat = model(X)
         y_hat_sigmoid = torch.sigmoid(y_hat)
-        yyhat_tuples += zip(y.cpu().detach().numpy(), y_hat_sigmoid.cpu().detach().numpy())
+        yyhat_tuples += zip(y.cpu().detach().numpy(),
+                            y_hat_sigmoid.cpu().detach().numpy())
 
         # Loss
         loss = criterion(y_hat, y)
@@ -59,20 +58,18 @@ def train_batches(train_loader, model, optimizer, criterion):
 
 
 def valid_batches(val_loader, model, criterion):
-    """Perform validation on val_loader images.
+    """Perform a validation step.
     Args:
-        val_loader (DataLoader): data loader with validation data
+        train_loader (DataLoader): data loader with training images
         model (Model): model
-        loss_fn (criterion): loss function
-        accuracy (accuracy): accuracy object
-        device (string): cuda or cpu
+        optimizer (optimizer): optimizer
+        criterion (criterion): loss functin
     Returns:
-        (float, float): (loss, accuracy) for data loader
+        float, List[(y, y_hat)]: loss and label-output tuples
     """
 
     n_batches = len(val_loader)
     total_loss = 0.0
-    total_acc = 0.0
     yyhat_tuples = []
 
     model.eval()
@@ -82,7 +79,8 @@ def valid_batches(val_loader, model, criterion):
 
             y_hat = model(X)
             y_hat_sigmoid = torch.sigmoid(y_hat)
-            yyhat_tuples += zip(y.cpu().detach().numpy(), y_hat_sigmoid.cpu().detach().numpy())
+            yyhat_tuples += zip(y.cpu().detach().numpy(),
+                                y_hat_sigmoid.cpu().detach().numpy())
 
             # Add loss to accumulator
             loss = criterion(y_hat, y)
@@ -108,6 +106,15 @@ def get_predictions_for_batch(outputs):
 
 
 def get_model_name(args):
+    """Create a unique model consisting of timestamp + model_architecture + model_config
+
+    Args:
+        args (ArgumentParser): Argumentparser
+
+    Returns:
+        str: unique model name
+    """
+
     timestamp = datetime.now().strftime('%m-%d_%H%M_%S')
 
     model_arch = f'CvMx-h={args.h}-d={args.depth}-k={args.k_size}-p={args.p_size}'
@@ -117,6 +124,17 @@ def get_model_name(args):
 
 
 def get_optimizer(model, args, n_batches_per_e=None):
+    """Rreturns an optimizer as defined in args.optimizer.
+
+    Args:
+        model (Model): pytorch model
+        args (ArgumentParser): ArgumentParser
+        n_batches_per_e (int, optional): Number of batches per epoch, used for Ranger21. Defaults to None.
+
+    Returns:
+        torch.optimizer: optimizer
+    """
+
     if args.optimizer == 'SGD':
         return optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     elif args.optimizer == 'Adam':
@@ -130,11 +148,19 @@ def get_optimizer(model, args, n_batches_per_e=None):
         return Ranger21(model.parameters(), lr=args.lr, 
                         num_epochs=args.epochs, num_batches_per_epoch=n_batches_per_e)
     else:
-        print("Error: get_optimizer() did not find a matching optimizer.")
-        assert False
+        assert False, "Error: get_optimizer() did not find a matching optimizer."
 
 
 def get_activation(activation):
+    """Return an activation function. Either 'GELU' or 'ReLU'.
+
+    Args:
+        activation (str): One of 'GELU' or 'ReLU'
+
+    Returns:
+        nn.Optimizer: optimzer function
+    """
+
     if activation == 'GELU':
         return nn.GELU()
     elif activation == 'ReLU':
@@ -251,6 +277,15 @@ def get_sorted_ckpt_filenames(path):
 
 
 def write_metrics(writer, tag, yy_hat, loss, e):
+    """Log metrics to stdout and to Tensorboard writer.
+
+    Args:
+        writer (SummaryWriter): TB SummaryWriter
+        tag (str): phase, either train, valid or test
+        yy_hat ([(y, y_hat)]): List of (y, y_hat) tuples
+        loss (float): loss value
+        e (int): current epoch
+    """
 
     print(f"{tag} metrics:")
 
@@ -258,19 +293,26 @@ def write_metrics(writer, tag, yy_hat, loss, e):
     y_hat_sigmoid = yy_hat[:, 1, :]
     y_hat_predict = np.round(y_hat_sigmoid)
 
+    assert not np.isnan(np.sum(y))
+    assert not np.isnan(np.sum(y_hat_sigmoid))
+    assert not np.isinf(np.sum(y))
+    assert not np.isinf(np.sum(y_hat_sigmoid))
+    assert np.any(y)
+    assert np.any(y_hat_sigmoid)
+
     # mAP
     writer.add_scalar(f"mAP-micro/{tag}", average_precision_score(y, y_hat_sigmoid, average='micro'), e)
     writer.add_scalar(f"mAP-macro/{tag}", average_precision_score(y, y_hat_sigmoid, average='macro'), e)
     print(f"mAP-micro/{tag} {average_precision_score(y, y_hat_sigmoid, average='micro'):.4f}")
     print(f"mAP-macro/{tag} {average_precision_score(y, y_hat_sigmoid, average='macro'):.4f}")
-    print(f"AP_class/{tag} {np.round(average_precision_score(y, y_hat_sigmoid, average=None), 2)}")
+    print(f"AP_class/{tag} {np.round(average_precision_score(y, y_hat_sigmoid, average=None), 4)}")
 
     # F1
     writer.add_scalar(f"F1-micro/{tag}", f1_score(y, y_hat_predict, average='micro'), e)
     writer.add_scalar(f"F1-macro/{tag}", f1_score(y, y_hat_predict, average='macro'), e)
     print(f"F1-micro/{tag} {f1_score(y, y_hat_predict, average='micro'):.4f}")
     print(f"F1-macro/{tag} {f1_score(y, y_hat_predict, average='macro'):.4f}")
-    print(f"F1-class/{tag} {np.round(f1_score(y, y_hat_predict, average=None), 2)}")
+    print(f"F1-class/{tag} {np.round(f1_score(y, y_hat_predict, average=None), 4)}")
 
     # Loss
     writer.add_scalar(f"Loss/{tag}", loss, e)

@@ -26,18 +26,16 @@ def _parse_args():
     parser = argparse.ArgumentParser(description="ConvMixer Parameters")
 
     # Training parameters
-    parser.add_argument('--epochs', type=int, default=25)
-    parser.add_argument('--batch_size', type=int, default=256)
-    parser.add_argument('--ds_size', type=int, default=None)
-    parser.add_argument('--momentum', type=float, default=0.9)
-    parser.add_argument('--lr', type=float, default=0.01)
-    parser.add_argument('--lr_scheduler', type=str, default=None)
-    parser.add_argument('--lr_patience', type=int, default='4',
-                        help='epochs to wait for improvement before lr reduction')
-    parser.add_argument('--lr_thresh', type=float, default='0.001',
-                        help='lr delta that is seen as improvement')
-    parser.add_argument('--lr_factor', type=float, default='0.4',
-                        help='lr reduction factor')
+    parser.add_argument('--epochs', type=int, default=25,
+                        help='number of epochs')
+    parser.add_argument('--batch_size', type=int, default=256,
+                        help='batch size (for train, valid, test)')
+    parser.add_argument('--ds_size', type=int, default=None,
+                        help='limit number of overall samples (i.e. for dry runs)')
+    parser.add_argument('--momentum', type=float, default=0.9,
+                        help='momentum of optimizer')
+    parser.add_argument('--lr', type=float, default=0.01,
+                        help='learning rate')
     parser.add_argument('--optimizer', type=str, default='SGD',
                         help='one of \'SGD\', \'Adam\', \'AdamW\', \'Ranger21\', \'LAMB\'')
     parser.add_argument('--activation', type=str, default='GELU',
@@ -57,11 +55,16 @@ def _parse_args():
 
 
     # Model parameters
-    parser.add_argument('--h', type=int, default=128)
-    parser.add_argument('--depth', type=int, default=8)
-    parser.add_argument('--k_size', type=int, default=9)
-    parser.add_argument('--p_size', type=int, default=7)
-    parser.add_argument('--k_dilation', type=int, default=1)
+    parser.add_argument('--h', type=int, default=128,
+                        help='hidden dimension')
+    parser.add_argument('--depth', type=int, default=8,
+                        help='number of ConvMixer layers')
+    parser.add_argument('--k_size', type=int, default=9,
+                        help='kernel size in ConvMixer layers')
+    parser.add_argument('--p_size', type=int, default=7,
+                        help='patch size')
+    parser.add_argument('--k_dilation', type=int, default=1,
+                        help='dilation of convolutions in ConvMixer layers')
 
     return parser.parse_args()
 
@@ -73,11 +76,6 @@ def main():
 
     #### Path and further hparams settings ###
     setup_paths_and_hparams(args)
-
-    # Dump arguments into yaml file
-    with open(f'{args.model_dir}/args.yaml', 'w') as outfile:
-        yaml.dump(args.__dict__, outfile, default_flow_style=False)
-
 
     writer = SummaryWriter(log_dir=args.model_dir)
     run_training(args, writer)
@@ -91,13 +89,11 @@ def run_training(args, writer):
     print("Start training ...")
     torch.manual_seed(42)
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    ### Configure dataloaders ###
     train_loader = get_dataloader(args, args.TRAIN_CSV_FILE, shuffle=True)
     valid_loader = get_dataloader(args, args.VALID_CSV_FILE, shuffle=True)
 
-    ### Create model and move to GPU(s) ###
+    # Create model and move to GPU(s)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = ConvMixer(
         10,
         args.h,
@@ -113,35 +109,35 @@ def run_training(args, writer):
     args.n_params = sum(p.numel() for p in model.parameters())
     args.n_params_trainable = sum(p.numel() for p in model.parameters())
 
+    # Dump arguments into yaml file
+    with open(f'{args.model_dir}/args.yaml', 'w') as outfile:
+        yaml.dump(args.__dict__, outfile, default_flow_style=False)
+
+
     torch.cuda.empty_cache()
     model.to(device)
     model = DP(model)
 
-    scheduler = ReduceLROnPlateau(optimizer, 'min', patience=args.lr_patience, 
-                                  factor=args.lr_factor, verbose=True, threshold=args.lr_thresh)
 
-    #### MAIN TRAINING LOOP ####
+    # Main training loop
     val_loss_min = np.inf
     print('Start main training loop.')
     for e in range(args.epochs):
 
         print(f'\n[{e+1:3d}/{args.epochs:3d}]')
 
-        ### TRAINING ###
+        # Training
         model.train()
         loss, train_yyhat = train_batches(train_loader, model, optimizer, criterion)
         write_metrics(writer, 'train', train_yyhat, loss, e)
 
-        ### VALIDATION ###
+        # Validation
         model.eval()
         loss, valid_yyhat = valid_batches(valid_loader, model, criterion)
         write_metrics(writer, 'valid', valid_yyhat, loss, e)
 
-        ### HPARAM CONFIG ###
-        if args.lr_scheduler is not None:
-            scheduler.step(loss)
 
-        ### CHECKPOINT ###
+        # Checkpoints
         if args.save_training and loss < val_loss_min:
             print(f'\tval_loss decreased ({val_loss_min:.6f} --> {loss:.6f}). Saving this model ...')
             save_checkpoint(args, model, optimizer, e+1)
@@ -151,12 +147,14 @@ def run_training(args, writer):
             writer.add_histogram(name, param, e)
             writer.add_histogram('{}.grad'.format(name), param.grad, e)
 
+
+    print('Finished training.\n')
+    
     if args.save_training:
         print('Saving final model ...')
         save_checkpoint(args, model, optimizer, args.epochs)
 
 
-    print('Finished training.\n')
 
 
 def run_tests(args, writer):

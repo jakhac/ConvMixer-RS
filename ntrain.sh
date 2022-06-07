@@ -2,7 +2,7 @@
 
 ### test
 # sbatch train.sh "--epochs=15 --batch_size=256 --lr=0.0001 --h=1000 --depth=8 --optimizer=Adam --exp_name=testings --dry_run=True"
-# sbatch train.sh "--epochs=1 --batch_size=512 --ds_size=2048 --lr=0.0001 --h=1000 --depth=8 --optimizer=Lamb --exp_name=v5-optims"
+# sbatch train.sh "--epochs=1 --batch_size=2048 --lr=0.0001 --h=250 --depth=4 --optimizer=Lamb --exp_name=v5-optims"
 
 ### baseline
 ## reasonably large baseline: epochs way to high, early overfit -> lower lr
@@ -20,10 +20,10 @@
 # sbatch train.sh "--epochs=15 --batch_size=256 --lr=0.0001 --h=1000 --depth=8 --optimizer=Adam --exp_name=v4-addmetrics"
 
 ### lr scheduler, lower lr, adamw vs ranger21
-sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=1000 --depth=8 --optimizer=AdamW --exp_name=v5-compare-optims"
-sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=1000 --depth=8 --optimizer=Ranger21 --exp_name=v5-compare-optims"
-sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=1000 --depth=8 --optimizer=Lamb --exp_name=v5-compare-optims"
-sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=1000 --depth=8 --optimizer=SGD --exp_name=v5-compare-optims"
+sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=960 --depth=8 --optimizer=AdamW --exp_name=v5-compare-optims"
+sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=960 --depth=8 --optimizer=Ranger21 --exp_name=v5-compare-optims"
+sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=960 --depth=8 --optimizer=Lamb --exp_name=v5-compare-optims"
+sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=960 --depth=8 --optimizer=SGD --exp_name=v5-compare-optims"
 
 
 ### lower epochs, increase batchsize, regularization?
