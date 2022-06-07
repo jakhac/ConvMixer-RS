@@ -5,7 +5,7 @@
 
 ##SBATCH --ntasks=2 		# Anzahl Prozesse P (CPU-Cores) 
 
-#SBATCH --nodes=2
+#SBATCH --nodes=1
 
 #SBATCH --ntasks-per-node=2
 #SBATCH --gres=gpu:tesla:2
@@ -13,26 +13,17 @@
 #SBATCH --cpus-per-task=1	# Anzahl CPU-Cores pro Prozess P
 ###SBATCH --mem-per-cpu=8G
 
-#SBATCH --time=16:00:00 # Erwartete Laufzeit
+#SBATCH --time=01:00:00 # Erwartete Laufzeit
 #SBATCH --partition=gpu_short
 
 #Job-Status per Mail:
 # #SBATCH --mail-type=NONE
 # #SBATCH --mail-user=ddato@t-online.de
 
-export https_proxy=http://frontend01:3128/ 
+export https_proxy=http://frontend01:3128/
 
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate pytest102
-
-export MASTER_PORT=12340
-
-echo "NODELIST="${SLURM_NODELIST}
-master_addr=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-export MASTER_ADDR=$master_addr
-echo "MASTER_ADDR="$MASTER_ADDR
-
-# export NCCL_DEBUG=INFO
 
 cd /scratch/jakhac/ConvMixer/src
 
@@ -41,5 +32,5 @@ echo $1
 
 echo ""
 echo "Start execution of train.py"
-srun python3 train.py $1 --num_nodes=$SLURM_JOB_NUM_NODES
+python3 train.py $1
 

@@ -9,10 +9,11 @@ import torch
 from torchmetrics.functional import accuracy
 from datetime import datetime
 
-from sklearn.metrics import average_precision_score, f1_score, precision_score
+from sklearn.metrics import average_precision_score, f1_score, precision_score, accuracy_score
 
 from ranger21 import Ranger21
 import torch.optim as optim
+import torch_optimizer as torch_optim
 import torch.nn as nn
 from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
 import torch.distributed as dist
@@ -22,7 +23,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 
-def train_batches(train_loader, model, optimizer, criterion, gpu):
+def train_batches(train_loader, model, optimizer, criterion):
     """Perform a full training step for given batches in train_loader.
     Args:
         train_loader (DataLoader): data loader with training images
@@ -34,25 +35,19 @@ def train_batches(train_loader, model, optimizer, criterion, gpu):
         (float, float): (loss, accuracy) for this data_loader
     """
 
-    total_acc = 0.0
+    # total_acc = 0.0
     total_loss = 0.0
     n_batches = len(train_loader)
     yyhat_tuples = []
 
     model.train()
     for X, y in train_loader:
-        X, y = X.cuda(gpu), y.cuda(gpu)
+        X, y = X.cuda(), y.cuda()
         optimizer.zero_grad()
 
         y_hat = model(X)
-
-        ### METRICS ###
         y_hat_sigmoid = torch.sigmoid(y_hat)
         yyhat_tuples += zip(y.cpu().detach().numpy(), y_hat_sigmoid.cpu().detach().numpy())
-
-        # Accuracy
-        y_predictions = torch.round(y_hat_sigmoid)
-        total_acc += accuracy(y_predictions.to(torch.int), y.to(torch.int), subset_accuracy=True)
 
         # Loss
         loss = criterion(y_hat, y)
@@ -60,10 +55,10 @@ def train_batches(train_loader, model, optimizer, criterion, gpu):
         loss.backward()
         optimizer.step()
 
-    return (total_loss / n_batches), (total_acc / n_batches), np.asarray(yyhat_tuples)
+    return (total_loss / n_batches), np.asarray(yyhat_tuples)
 
 
-def valid_batches(val_loader, model, criterion, gpu):
+def valid_batches(val_loader, model, criterion):
     """Perform validation on val_loader images.
     Args:
         val_loader (DataLoader): data loader with validation data
@@ -83,23 +78,18 @@ def valid_batches(val_loader, model, criterion, gpu):
     model.eval()
     with torch.no_grad():
         for X, y in val_loader:
-            X, y = X.cuda(gpu), y.cuda(gpu)
-            y_hat = model(X)
+            X, y = X.cuda(), y.cuda()
 
+            y_hat = model(X)
             y_hat_sigmoid = torch.sigmoid(y_hat)
             yyhat_tuples += zip(y.cpu().detach().numpy(), y_hat_sigmoid.cpu().detach().numpy())
 
-            # Accuracy
-            y_predictions = torch.round(y_hat_sigmoid)
-            total_acc += accuracy(y_predictions.to(torch.int), y.to(torch.int),
-                                  subset_accuracy=True)   
-            
             # Add loss to accumulator
             loss = criterion(y_hat, y)
             total_loss += loss.item()
             
 
-    return (total_loss / n_batches), (total_acc / n_batches), yyhat_tuples
+    return (total_loss / n_batches), np.asarray(yyhat_tuples)
 
 
 def get_predictions_for_batch(outputs):
@@ -133,6 +123,8 @@ def get_optimizer(model, args, n_batches_per_e=None):
         return optim.Adam(model.parameters(), lr=args.lr)
     elif args.optimizer == 'AdamW':
         return optim.AdamW(model.parameters(), lr=args.lr)
+    elif args.optimizer == 'Lamb':
+        return torch_optim.Lamb(model.parameters(), lr=args.lr)
     elif args.optimizer == 'Ranger21':
         assert n_batches_per_e
         return Ranger21(model.parameters(), lr=args.lr, 
@@ -152,45 +144,7 @@ def get_activation(activation):
         assert False
 
 
-def get_global_yyhat(args, samples_per_gpu, yyhat):
-
-
-    global_yyhat = torch.zeros((args.world_size, samples_per_gpu, 2, 19), dtype=torch.float32).cuda(args.gpu)
-    yyhat = np.array(yyhat) # Faster, according to pytorch user warning
-
-    if args.is_master:
-        dist.gather(torch.tensor(yyhat).cuda(args.gpu), [g.to(torch.float32) for g in global_yyhat], dst=0)
-    else:
-        dist.gather(torch.tensor(yyhat).cuda(args.gpu), dst=0)
-
-    return global_yyhat
-
-
-def global_metric_avg(args, metric):
-    """Gather all metric tensors across processes and return mean.
-
-    Args:
-        args (ArgumentParser): ArgumentParser
-        metric (Tensor): Tensor to be synchronized
-
-    Returns:
-        Tensor: Mean of all tensors
-    """
-
-    global_metric = torch.ones(args.world_size, dtype=torch.float32).cuda(args.gpu)
-
-    # Process 0 stores all results in a list, remaining
-    # processes only call gather().
-    if args.is_master:
-        dist.gather(torch.tensor(metric).cuda(args.gpu),
-                    gather_list=[g.to(torch.float) for g in global_metric]) # ??
-    else:
-        dist.gather(torch.tensor(metric).cuda(args.gpu))
-
-    return torch.mean(global_metric)
-
-
-def get_dataloader(args, csv_file, shuffle, distribute=True):
+def get_dataloader(args, csv_file, shuffle):
     """Return a dataloader. If distributed, the dataloader uses a
     DistributedSampler.
 
@@ -205,15 +159,8 @@ def get_dataloader(args, csv_file, shuffle, distribute=True):
     """
 
     ds = BenDataset(csv_file, args.BEN_LMDB_PATH, args.ds_size)
-
-    sampler = None
-    if distribute:
-        sampler = DistributedSampler(ds, shuffle=shuffle, drop_last=True)
-    
-
-    shuffle_in_dl = not distribute and shuffle
-    return DataLoader(ds, batch_size=args.batch_size, shuffle=shuffle_in_dl,
-                              sampler=sampler, drop_last=True, pin_memory=True)
+    return DataLoader(ds, batch_size=args.batch_size, shuffle=shuffle, 
+                      drop_last=True, pin_memory=True)
 
 
 def setup_paths_and_hparams(args):
@@ -245,7 +192,7 @@ def setup_paths_and_hparams(args):
 
     # Allow dry runs for quick testing purpose
     if args.dry_run:
-        args.epochs = 2 
+        args.epochs = 1
         args.ds_size = 100
         args.batch_size = 10
         args.lr = 0.1
@@ -271,22 +218,18 @@ def save_checkpoint(args, model, optimizer, epoch):
         p)
 
 
-def load_checkpoint(model, path, gpu, distributed):
+def load_checkpoint(model, path):
     """Load weights from a checkpoint into model on the specified GPU.
-    Distirbuted flag is required to consume prefixes from DDP state dicts.
+    Distributed flag is required to consume prefixes from DDP state dicts.
 
     Args:
         model (Model): Model
         path (str): path/to/file.ckpt
-        gpu (int): CUDA GPU device
         distributed (bool): True if model that is loading weights is DDP, else false
     """
 
-    state_dict = torch.load(path, map_location='cuda:' + str(gpu))
-
-    if distributed:
-        consume_prefix_in_state_dict_if_present(state_dict['model_state'], 'module.')
-    
+    state_dict = torch.load(path)
+    consume_prefix_in_state_dict_if_present(state_dict['model_state'], "module.")
     model.load_state_dict(state_dict['model_state'])
 
 
@@ -307,35 +250,34 @@ def get_sorted_ckpt_filenames(path):
     return ckpt_names
 
 
-def write_metrics(writer, tag, yy_hat, loss, acc, e, from_gpu=True):
+def write_metrics(writer, tag, yy_hat, loss, e):
 
-    if from_gpu:
-        yy_hat = yy_hat.cpu().detach().numpy()
-        yy_hat = np.concatenate((yy_hat), axis=0)
-    else:
-        yy_hat = np.asarray(yy_hat)
+    print(f"{tag} metrics:")
 
     y = yy_hat[:, 0, :]
-    y_hat_sig = yy_hat[:, 1, :]
+    y_hat_sigmoid = yy_hat[:, 1, :]
+    y_hat_predict = np.round(y_hat_sigmoid)
 
     # mAP
-    writer.add_scalar(f"mAP-micro/{tag}", average_precision_score(y, y_hat_sig, average='micro'), e)
-    writer.add_scalar(f"mAP-macro/{tag}", average_precision_score(y, y_hat_sig, average='macro'), e)
-    print(f"mAP-micro/{tag} {average_precision_score(y, y_hat_sig, average='micro'):.4f}")
-    print(f"mAP-macro/{tag} {average_precision_score(y, y_hat_sig, average='macro'):.4f}")
-    print(f"AP_class/{tag} {average_precision_score(y, y_hat_sig, average=None)}")
+    writer.add_scalar(f"mAP-micro/{tag}", average_precision_score(y, y_hat_sigmoid, average='micro'), e)
+    writer.add_scalar(f"mAP-macro/{tag}", average_precision_score(y, y_hat_sigmoid, average='macro'), e)
+    print(f"mAP-micro/{tag} {average_precision_score(y, y_hat_sigmoid, average='micro'):.4f}")
+    print(f"mAP-macro/{tag} {average_precision_score(y, y_hat_sigmoid, average='macro'):.4f}")
+    print(f"AP_class/{tag} {np.round(average_precision_score(y, y_hat_sigmoid, average=None), 2)}")
 
     # F1
-    writer.add_scalar(f"F1-micro/{tag}", f1_score(y, np.round(y_hat_sig), average='micro'), e)
-    writer.add_scalar(f"F1-macro/{tag}", f1_score(y, np.round(y_hat_sig), average='macro'), e)
-    print(f"F1-micro/{tag} {f1_score(y, np.round(y_hat_sig), average='micro'):.4f}")
-    print(f"F1-macro/{tag} {f1_score(y, np.round(y_hat_sig), average='macro'):.4f}")
-    print(f"F1-class/{tag} {f1_score(y, np.round(y_hat_sig), average=None)}")
+    writer.add_scalar(f"F1-micro/{tag}", f1_score(y, y_hat_predict, average='micro'), e)
+    writer.add_scalar(f"F1-macro/{tag}", f1_score(y, y_hat_predict, average='macro'), e)
+    print(f"F1-micro/{tag} {f1_score(y, y_hat_predict, average='micro'):.4f}")
+    print(f"F1-macro/{tag} {f1_score(y, y_hat_predict, average='macro'):.4f}")
+    print(f"F1-class/{tag} {np.round(f1_score(y, y_hat_predict, average=None), 2)}")
 
     # Loss
     writer.add_scalar(f"Loss/{tag}", loss, e)
     print(f"Loss/{tag} {loss:.4f}")
     
     # Accuracy
+    acc = accuracy_score(y_hat_predict, y)
     writer.add_scalar(f"Acc/{tag}", acc, e)
     print(f"Acc/{tag} {acc:.4f}")
+    print()
