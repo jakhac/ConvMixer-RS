@@ -3,11 +3,15 @@ import numpy as np
 import lmdb
 from pathlib import Path
 from bigearthnet_patch_interface.s2_interface import BigEarthNet_S2_Patch
+from sklearn.compose import TransformedTargetRegressor
 
 import torch
+import torch.nn as nn
 from torch.utils.data import Dataset
 from torch import Tensor, cat, stack
 from torch.nn.functional import interpolate
+
+from torchvision import transforms
 
 from sklearn.preprocessing import MultiLabelBinarizer
 
@@ -25,7 +29,7 @@ LABELS = [
 
 class BenDataset(Dataset):
 
-    def __init__(self, csv_file, lmdb_path, size=None):
+    def __init__(self, csv_file, lmdb_path, transforms=None, size=None):
         """
         Load csv and connect to lmdb file.
 
@@ -43,6 +47,8 @@ class BenDataset(Dataset):
         self.lmdb_path = Path(lmdb_path)
         self.env = lmdb.open(str(self.lmdb_path), readonly=True, readahead=True, lock=False)
         
+        self.transforms = transforms
+
         self.mlb = MultiLabelBinarizer()
         self.mlb.fit([LABELS])
 
@@ -74,5 +80,58 @@ class BenDataset(Dataset):
         
         str_labels = dict(s2_patch.__stored_args__.items())['new_labels']
         one_hot_labels = self.mlb.transform([str_labels])[0]
+
+        if self.transforms:
+            bands_stacked_torch[0] = self.transforms(bands_stacked_torch[0])
         
         return bands_stacked_torch[0], torch.from_numpy(one_hot_labels).type(torch.FloatTensor)
+
+
+    def get_mlb(self):
+        return self.mlb
+
+    
+    def get_str_labels(self, y):
+
+        y = np.asarray(y)
+        label_str = self.get_mlb().inverse_transform(np.asarray([y]))
+
+        return label_str
+
+
+def get_transformation_chain(strength):
+
+    # horizontal/vertical flips and random rotation
+    if strength == 1:
+        return transforms.Compose([
+            transforms.RandomVerticalFlip(p=0.5),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomApply(nn.ModuleList([
+                transforms.RandomRotation(90)
+            ]), p=0.25)
+        ])
+
+    # strength_1 + random crp with reflecting-padding
+    elif strength == 2:
+        return transforms.Compose([
+            transforms.RandomVerticalFlip(p=0.5),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomApply(nn.ModuleList([
+                transforms.RandomCrop(size=120, pad_if_needed=True, padding_mode='reflect'),
+                transforms.RandomRotation(180)
+            ]), p=0.25)
+        ])
+
+    # strength_2 + higher prob and replace RandomCrop with RandomResizedCrop
+    elif strength == 3:
+        return transforms.Compose([
+            transforms.RandomVerticalFlip(p=0.5),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomApply(nn.ModuleList([
+                transforms.RandomResizedCrop(size=120),
+                transforms.RandomRotation(180)
+            ]), p=0.4)
+        ])
+
+
+    return None

@@ -1,3 +1,4 @@
+from genericpath import exists
 import os
 from pydoc import apropos
 from dotenv import load_dotenv
@@ -15,20 +16,19 @@ import torch.optim as optim
 import torch_optimizer as torch_optim
 import torch.nn as nn
 from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
-import torch.distributed as dist
 
-from ben_dataset import BenDataset
+from ben_dataset import BenDataset, get_transformation_chain
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 
 
-def train_batches(train_loader, model, optimizer, criterion):
+def train_batches(train_loader, model, optimizer, criterion, dev):
     """Perform a training step.
     Args:
         train_loader (DataLoader): data loader with training images
         model (Model): model
         optimizer (optimizer): optimizer
-        criterion (criterion): loss functin
+        criterion (criterion): loss function
+        dev (str): device, either cuda or cpu
     Returns:
         float, List[(y, y_hat)]: loss and label-output tuples
     """
@@ -40,7 +40,7 @@ def train_batches(train_loader, model, optimizer, criterion):
 
     model.train()
     for X, y in train_loader:
-        X, y = X.cuda(), y.cuda()
+        X, y = X.to(dev), y.to(dev)
         optimizer.zero_grad()
 
         y_hat = model(X)
@@ -57,13 +57,14 @@ def train_batches(train_loader, model, optimizer, criterion):
     return (total_loss / n_batches), np.asarray(yyhat_tuples)
 
 
-def valid_batches(val_loader, model, criterion):
+def valid_batches(val_loader, model, criterion, dev):
     """Perform a validation step.
     Args:
         train_loader (DataLoader): data loader with training images
         model (Model): model
         optimizer (optimizer): optimizer
-        criterion (criterion): loss functin
+        criterion (criterion): loss function
+        dev (str): device, either 'cuda' or 'cpu'
     Returns:
         float, List[(y, y_hat)]: loss and label-output tuples
     """
@@ -75,7 +76,7 @@ def valid_batches(val_loader, model, criterion):
     model.eval()
     with torch.no_grad():
         for X, y in val_loader:
-            X, y = X.cuda(), y.cuda()
+            X, y = X.to(dev), y.to(dev)
 
             y_hat = model(X)
             y_hat_sigmoid = torch.sigmoid(y_hat)
@@ -170,7 +171,7 @@ def get_activation(activation):
         assert False
 
 
-def get_dataloader(args, csv_file, shuffle):
+def get_dataloader(args, csv_file, apply_transforms, shuffle):
     """Return a dataloader. If distributed, the dataloader uses a
     DistributedSampler.
 
@@ -184,7 +185,12 @@ def get_dataloader(args, csv_file, shuffle):
         DataLoader: dataloader
     """
 
-    ds = BenDataset(csv_file, args.BEN_LMDB_PATH, args.ds_size)
+    transforms = None
+    if apply_transforms:
+        transforms = get_transformation_chain(args.augmentation)
+
+
+    ds = BenDataset(csv_file, args.BEN_LMDB_PATH, transforms=transforms, size=args.ds_size)
     return DataLoader(ds, batch_size=args.batch_size, shuffle=shuffle, 
                       drop_last=True, pin_memory=True)
 
@@ -219,10 +225,11 @@ def setup_paths_and_hparams(args):
     # Allow dry runs for quick testing purpose
     if args.dry_run:
         args.epochs = 1
-        args.ds_size = 100
-        args.batch_size = 10
+        args.ds_size = 40
+        args.batch_size = 20
         args.lr = 0.1
-        args.run_tests_n = 2
+        args.run_tests = True
+        # args.run_tests_n = 2
 
 
 def save_checkpoint(args, model, optimizer, epoch):
@@ -282,7 +289,7 @@ def write_metrics(writer, tag, yy_hat, loss, e):
     Args:
         writer (SummaryWriter): TB SummaryWriter
         tag (str): phase, either train, valid or test
-        yy_hat ([(y, y_hat)]): List of (y, y_hat) tuples
+        yy_hat ([(y, y_hat_sigmoid)]): List of (y, y_hat_sigmoid) tuples
         loss (float): loss value
         e (int): current epoch
     """

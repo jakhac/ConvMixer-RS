@@ -1,19 +1,17 @@
-from functools import total_ordering
 import yaml
 import argparse
 import numpy as np
 
 import torch
-from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 
-import torch.distributed as dist
 from torch.nn import DataParallel as DP
 
 from ben_dataset import *
 from conv_mixer import *
 from training_utils import *
+
+import matplotlib.pyplot as plt
 
 
 def _parse_args():
@@ -40,6 +38,9 @@ def _parse_args():
                         help='one of \'SGD\', \'Adam\', \'AdamW\', \'Ranger21\', \'LAMB\'')
     parser.add_argument('--activation', type=str, default='GELU',
                         help='GELU or ReLU')
+    parser.add_argument('--augmentation', type=int, default=0,
+                        help='strength of augmentation on scale of 0 (none) to 3 (strong)')
+
 
     # Config parameters
     parser.add_argument('--dry_run', default=False,
@@ -73,7 +74,6 @@ def main():
 
     args = _parse_args()
 
-
     #### Path and further hparams settings ###
     setup_paths_and_hparams(args)
 
@@ -89,8 +89,8 @@ def run_training(args, writer):
     print("Start training ...")
     torch.manual_seed(42)
 
-    train_loader = get_dataloader(args, args.TRAIN_CSV_FILE, shuffle=True)
-    valid_loader = get_dataloader(args, args.VALID_CSV_FILE, shuffle=True)
+    train_loader = get_dataloader(args, args.TRAIN_CSV_FILE, True, shuffle=True)
+    valid_loader = get_dataloader(args, args.VALID_CSV_FILE, True, shuffle=True)
 
     # Create model and move to GPU(s)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -128,12 +128,12 @@ def run_training(args, writer):
 
         # Training
         model.train()
-        loss, train_yyhat = train_batches(train_loader, model, optimizer, criterion)
+        loss, train_yyhat = train_batches(train_loader, model, optimizer, criterion, device)
         write_metrics(writer, 'train', train_yyhat, loss, e)
 
         # Validation
         model.eval()
-        loss, valid_yyhat = valid_batches(valid_loader, model, criterion)
+        loss, valid_yyhat = valid_batches(valid_loader, model, criterion, device)
         write_metrics(writer, 'valid', valid_yyhat, loss, e)
 
 
@@ -143,9 +143,9 @@ def run_training(args, writer):
             save_checkpoint(args, model, optimizer, e+1)
             val_loss_min = loss
 
-        for name, param in model.named_parameters():
-            writer.add_histogram(name, param, e)
-            writer.add_histogram('{}.grad'.format(name), param.grad, e)
+        # for name, param in model.named_parameters():
+        #     writer.add_histogram(name, param, e)
+        #     writer.add_histogram('{}.grad'.format(name), param.grad, e)
 
 
     print('Finished training.\n')
@@ -153,8 +153,6 @@ def run_training(args, writer):
     if args.save_training:
         print('Saving final model ...')
         save_checkpoint(args, model, optimizer, args.epochs)
-
-
 
 
 def run_tests(args, writer):
@@ -168,6 +166,7 @@ def run_tests(args, writer):
 
     print('\nStart testing.')
 
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = ConvMixer(
         10,
         args.h,
@@ -176,10 +175,13 @@ def run_tests(args, writer):
         patch_size=args.p_size,
         n_classes=19,
         activation=args.activation
-    ).cuda()
+    )
     criterion = nn.BCEWithLogitsLoss()
 
-    test_loader = get_dataloader(args, args.TEST_CSV_FILE, False)
+    torch.cuda.empty_cache()
+    model.to(device)
+
+    test_loader = get_dataloader(args, args.TEST_CSV_FILE, False, shuffle=False)
     ckpt_names = get_sorted_ckpt_filenames(args.model_ckpt_dir)
     model_names = list(reversed(ckpt_names))[:args.run_tests_n]
     print(f'Following epochs are tested: {model_names}')
@@ -188,7 +190,7 @@ def run_tests(args, writer):
         p = f'{args.model_ckpt_dir}/{model_name}.ckpt'
         load_checkpoint(model, p)
 
-        loss, yyhat = valid_batches(test_loader, model, criterion)
+        loss, yyhat = valid_batches(test_loader, model, criterion, device)
         print(f'{model_name}.pt scores:')
 
         e = int(model_name)
