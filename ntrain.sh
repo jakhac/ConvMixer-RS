@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ### test
-# sbatch train.sh "--augmentation=3 --h=10 --depth=4 --optimizer=Ranger21 --exp_name=testings --dry_run=True"
+sbatch train.sh "--augmentation=3 --h=10 --depth=4 --optimizer=SGD --exp_name=testings --dry_run=True"
 
 ### v1 Baseline depth-based model
 # sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=512 --depth=16 --optimizer=AdamW --exp_name=v1-depth-baseline"

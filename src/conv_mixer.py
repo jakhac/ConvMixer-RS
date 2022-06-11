@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 from training_utils import get_activation
-from torchmetrics.functional import accuracy
-
+# from torchmetrics.functional import accuracy
+from torchmetrics import Accuracy, F1Score, AveragePrecision
 
 class ConvMixerLayer(nn.Module):
     
@@ -38,8 +38,16 @@ class ConvMixer(nn.Module):
         super().__init__()
 
 
-        # self.accuracy = Accuracy(subset_accuracy=True)
-        # self.loss = nn.BCEWithLogitsLoss()
+        self.accuracy = Accuracy(subset_accuracy=True)
+
+        self.mAP_micro = AveragePrecision(num_classes=19, average='micro', multiclass=True)
+        self.mAP_macro = AveragePrecision(num_classes=19, average='macro', multiclass=True)
+        self.mAP_class = AveragePrecision(num_classes=19, average=None, multiclass=True)
+
+        self.f1_micro = F1Score(num_classes=19, mdmc_average='samplewise')
+        self.f1_macro = F1Score(num_classes=19, average='macro', mdmc_average='global', multiclass=True)
+        self.f1_class = F1Score(num_classes=19, average=None, mdmc_average='global', multiclass=True)
+
         
         # Patch embeddings as convolutions
         self.patch_embedding = nn.Sequential(

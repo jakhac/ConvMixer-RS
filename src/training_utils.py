@@ -10,6 +10,7 @@ import torch
 from datetime import datetime
 
 from sklearn.metrics import average_precision_score, f1_score, accuracy_score
+from torchmetrics.functional import f1_score as tf1_score
 
 from ranger21 import Ranger21
 import torch.optim as optim
@@ -20,8 +21,11 @@ from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
 from ben_dataset import BenDataset, get_transformation_chain
 from torch.utils.data import DataLoader
 
+import torch.distributed as dist
+from torch.utils.data.distributed import DistributedSampler
 
-def train_batches(train_loader, model, optimizer, criterion, dev):
+
+def train_batches(train_loader, model, optimizer, criterion, gpu):
     """Perform a training step.
     Args:
         train_loader (DataLoader): data loader with training images
@@ -33,20 +37,32 @@ def train_batches(train_loader, model, optimizer, criterion, dev):
         float, List[(y, y_hat)]: loss and label-output tuples
     """
 
-    # total_acc = 0.0
     total_loss = 0.0
     n_batches = len(train_loader)
-    yyhat_tuples = []
+    # yyhat_tuples = []
 
     model.train()
     for X, y in train_loader:
-        X, y = X.to(dev), y.to(dev)
+        X, y = X.cuda(gpu), y.cuda(gpu)
         optimizer.zero_grad()
 
         y_hat = model(X)
         y_hat_sigmoid = torch.sigmoid(y_hat)
-        yyhat_tuples += zip(y.cpu().detach().numpy(),
-                            y_hat_sigmoid.cpu().detach().numpy())
+        y_hat_predict = torch.round(y_hat_sigmoid).type(torch.int)
+        # yyhat_tuples += zip(y.cpu().detach().numpy(),
+        #                     y_hat_sigmoid.cpu().detach().numpy())
+
+
+        model.module.accuracy.update(y_hat_predict, y.type(torch.int))
+
+        model.module.f1_micro.update(y_hat_predict, y.type(torch.int))
+        model.module.f1_macro.update(y_hat_predict, y.type(torch.int))
+        model.module.f1_class.update(y_hat_predict, y.type(torch.int))
+
+        model.module.mAP_micro.update(y_hat_sigmoid, y)
+        model.module.mAP_macro.update(y_hat_sigmoid, y)
+        model.module.mAP_class.update(y_hat_sigmoid, y)
+
 
         # Loss
         loss = criterion(y_hat, y)
@@ -54,10 +70,11 @@ def train_batches(train_loader, model, optimizer, criterion, dev):
         loss.backward()
         optimizer.step()
 
-    return (total_loss / n_batches), np.asarray(yyhat_tuples)
+
+    return (total_loss / n_batches)#, np.asarray(yyhat_tuples)
 
 
-def valid_batches(val_loader, model, criterion, dev):
+def valid_batches(val_loader, model, criterion, gpu):
     """Perform a validation step.
     Args:
         train_loader (DataLoader): data loader with training images
@@ -71,24 +88,35 @@ def valid_batches(val_loader, model, criterion, dev):
 
     n_batches = len(val_loader)
     total_loss = 0.0
-    yyhat_tuples = []
+    # yyhat_tuples = []
 
     model.eval()
     with torch.no_grad():
         for X, y in val_loader:
-            X, y = X.to(dev), y.to(dev)
+            X, y = X.cuda(gpu), y.cuda(gpu)
 
             y_hat = model(X)
             y_hat_sigmoid = torch.sigmoid(y_hat)
-            yyhat_tuples += zip(y.cpu().detach().numpy(),
-                                y_hat_sigmoid.cpu().detach().numpy())
+            y_hat_predict = torch.round(y_hat_sigmoid).type(torch.int)
+            # yyhat_tuples += zip(y.cpu().detach().numpy(),
+            #                     y_hat_sigmoid.cpu().detach().numpy())
+
+            model.module.accuracy.update(y_hat_predict, y.type(torch.int))
+
+            model.module.f1_micro.update(y_hat_predict, y.type(torch.int))
+            model.module.f1_macro.update(y_hat_predict, y.type(torch.int))
+            model.module.f1_class.update(y_hat_predict, y.type(torch.int))
+
+            model.module.mAP_micro.update(y_hat_sigmoid, y)
+            model.module.mAP_macro.update(y_hat_sigmoid, y)
+            model.module.mAP_class.update(y_hat_sigmoid, y)
 
             # Add loss to accumulator
             loss = criterion(y_hat, y)
             total_loss += loss.item()
-            
 
-    return (total_loss / n_batches), np.asarray(yyhat_tuples)
+
+    return (total_loss / n_batches)
 
 
 def get_predictions_for_batch(outputs):
@@ -104,6 +132,28 @@ def get_predictions_for_batch(outputs):
     predictions = torch.round(outputs_sig)
     
     return predictions
+
+
+def global_metric_avg(args, metric):
+    """Gather all metric tensors across processes and return mean.
+    Args:
+        args (ArgumentParser): ArgumentParser
+        metric (Tensor): Tensor to be synchronized
+    Returns:
+        Tensor: Mean of all tensors
+    """
+
+    global_metric = torch.ones(args.world_size, dtype=torch.float32).cuda(args.gpu)
+
+    # Process 0 stores all results in a list, remaining
+    # processes only call gather().
+    if args.is_master:
+        dist.gather(torch.tensor(metric).cuda(args.gpu),
+                    gather_list=[g.to(torch.float) for g in global_metric]) # ??
+    else:
+        dist.gather(torch.tensor(metric).cuda(args.gpu))
+
+    return torch.mean(global_metric)
 
 
 def get_model_name(args):
@@ -171,7 +221,7 @@ def get_activation(activation):
         assert False
 
 
-def get_dataloader(args, csv_file, apply_transforms, shuffle):
+def get_dataloader(args, csv_file, apply_transforms, shuffle, distribute):
     """Return a dataloader. If distributed, the dataloader uses a
     DistributedSampler.
 
@@ -189,10 +239,16 @@ def get_dataloader(args, csv_file, apply_transforms, shuffle):
     if apply_transforms:
         transforms = get_transformation_chain(args.augmentation)
 
-
     ds = BenDataset(csv_file, args.BEN_LMDB_PATH, transforms=transforms, size=args.ds_size)
-    return DataLoader(ds, batch_size=args.batch_size, shuffle=shuffle, 
-                      drop_last=True, pin_memory=True)
+
+    sampler = None
+    if distribute:
+        sampler = DistributedSampler(ds, shuffle=shuffle, drop_last=True)
+    
+
+    shuffle_in_dl = not distribute and shuffle
+    return DataLoader(ds, batch_size=args.batch_size, shuffle=shuffle_in_dl, 
+                      drop_last=True, pin_memory=True, sampler=sampler)
 
 
 def setup_paths_and_hparams(args):
@@ -226,9 +282,9 @@ def setup_paths_and_hparams(args):
     if args.dry_run:
         args.epochs = 1
         args.ds_size = 40
-        args.batch_size = 20
+        args.batch_size = 1
         args.lr = 0.1
-        args.run_tests = True
+        args.run_tests = False
         # args.run_tests_n = 2
 
 
@@ -283,7 +339,7 @@ def get_sorted_ckpt_filenames(path):
     return ckpt_names
 
 
-def write_metrics(writer, tag, yy_hat, loss, e):
+def write_metrics(writer, tag, model, loss, e):
     """Log metrics to stdout and to Tensorboard writer.
 
     Args:
@@ -296,37 +352,41 @@ def write_metrics(writer, tag, yy_hat, loss, e):
 
     print(f"{tag} metrics:")
 
-    y = yy_hat[:, 0, :]
-    y_hat_sigmoid = yy_hat[:, 1, :]
-    y_hat_predict = np.round(y_hat_sigmoid)
-
-    assert not np.isnan(np.sum(y))
-    assert not np.isnan(np.sum(y_hat_sigmoid))
-    assert not np.isinf(np.sum(y))
-    assert not np.isinf(np.sum(y_hat_sigmoid))
-    assert np.any(y)
-    assert np.any(y_hat_sigmoid)
+    acc = model.module.accuracy.compute()
+    f1_micro = model.module.f1_micro.compute()
+    f1_macro = model.module.f1_macro.compute()
+    f1_class = model.module.f1_class.compute()
+    mAP_micro = model.module.mAP_micro.compute()
+    mAP_macro = model.module.mAP_macro.compute()
+    mAP_class = model.module.mAP_class.compute()
 
     # mAP
-    writer.add_scalar(f"mAP-micro/{tag}", average_precision_score(y, y_hat_sigmoid, average='micro'), e)
-    writer.add_scalar(f"mAP-macro/{tag}", average_precision_score(y, y_hat_sigmoid, average='macro'), e)
-    print(f"mAP-micro/{tag} {average_precision_score(y, y_hat_sigmoid, average='micro'):.4f}")
-    print(f"mAP-macro/{tag} {average_precision_score(y, y_hat_sigmoid, average='macro'):.4f}")
-    print(f"AP_class/{tag} {np.round(average_precision_score(y, y_hat_sigmoid, average=None), 4)}")
+    writer.add_scalar(f"mAP-micro/{tag}", mAP_micro, e)
+    writer.add_scalar(f"mAP-macro/{tag}", mAP_macro, e)
+    print(f"mAP-micro/{tag} {mAP_micro:.4f}")
+    print(f"mAP-macro/{tag} {mAP_macro:.4f}")
+    print(f"AP_class/{tag} {torch.round(mAP_class, decimals=4)}")
 
-    # F1
-    writer.add_scalar(f"F1-micro/{tag}", f1_score(y, y_hat_predict, average='micro'), e)
-    writer.add_scalar(f"F1-macro/{tag}", f1_score(y, y_hat_predict, average='macro'), e)
-    print(f"F1-micro/{tag} {f1_score(y, y_hat_predict, average='micro'):.4f}")
-    print(f"F1-macro/{tag} {f1_score(y, y_hat_predict, average='macro'):.4f}")
-    print(f"F1-class/{tag} {np.round(f1_score(y, y_hat_predict, average=None), 4)}")
+    # # F1
+    writer.add_scalar(f"F1-micro/{tag}", f1_micro, e)
+    writer.add_scalar(f"F1-macro/{tag}", f1_macro, e)
+    print(f"F1-micro/{tag} {f1_micro:.4f}")
+    print(f"F1-macro/{tag} {f1_macro:.4f}")
+    print(f"F1-class/{tag} {torch.round(f1_class, decimals=4)}")
 
     # Loss
     writer.add_scalar(f"Loss/{tag}", loss, e)
     print(f"Loss/{tag} {loss:.4f}")
     
     # Accuracy
-    acc = accuracy_score(y_hat_predict, y)
     writer.add_scalar(f"Acc/{tag}", acc, e)
-    print(f"Acc/{tag} {acc:.4f}")
-    print()
+    print(f"Acc/{tag} {acc:.4f}\n")
+
+    # Reset all metric-accumulators for next epoch
+    model.module.accuracy.reset()
+    model.module.f1_micro.reset()
+    model.module.f1_macro.reset()
+    model.module.f1_class.reset()
+    model.module.mAP_micro.reset()
+    model.module.mAP_macro.reset()
+    model.module.mAP_class.reset()
