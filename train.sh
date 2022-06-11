@@ -3,18 +3,16 @@
 #SBATCH -o /scratch/jakhac/ConvMixer/myjob.%j.%N.out   # Output-File
 #SBATCH -D /scratch/jakhac/ConvMixer/src/    # Working Directory
 
-##SBATCH --ntasks=2 		# Anzahl Prozesse P (CPU-Cores) 
-
 #SBATCH --nodes=1
-
 #SBATCH --ntasks-per-node=2
 #SBATCH --gres=gpu:tesla:2
-#SBATCH --mem=100G          # 1GiB resident memory pro node
-#SBATCH --cpus-per-task=1	# Anzahl CPU-Cores pro Prozess P
-###SBATCH --mem-per-cpu=8G
 
-#SBATCH --time=24:00:00 # Erwartete Laufzeit
-#SBATCH --partition=gpu_short
+## SBATCH --mem=100G          # 1GiB resident memory pro node
+#SBATCH --mem-per-cpu=0
+
+#SBATCH --cpus-per-task=1	# Anzahl CPU-Cores pro Prozess P
+#SBATCH --time=48:00:00 # Erwartete Laufzeit
+#SBATCH --partition=gpu
 
 #Job-Status per Mail:
 # #SBATCH --mail-type=NONE

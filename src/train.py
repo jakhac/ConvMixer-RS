@@ -11,8 +11,6 @@ from ben_dataset import *
 from conv_mixer import *
 from training_utils import *
 
-import matplotlib.pyplot as plt
-
 
 def _parse_args():
     """Parse arguments and return ArgumentParser obj

@@ -119,7 +119,7 @@ def get_model_name(args):
     timestamp = datetime.now().strftime('%m-%d_%H%M_%S')
 
     model_arch = f'CvMx-h={args.h}-d={args.depth}-k={args.k_size}-p={args.p_size}'
-    model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}'
+    model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}_aug={args.augmentation}'
 
     return f'{timestamp}_{model_arch}_{model_config}'
 

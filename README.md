@@ -4,16 +4,21 @@ ConvMixer for remote sensing data (BigEarthNet)
 
 TODOs
 - [x] Run tests after training
-- [x] LR scheduler
-- [ ] Predict function (convert preds to labels)
+- [x] LR scheduler (implicit in optimizer)
+- [x] Predict function (convert preds to labels)
 - [x] Optimzer: LAMB, AdamW, Ranger21, SGD optimizer
-- [x] Add metrics: Recommended metrics
-- [ ] Data Augmentation: Various resizing, cropping .. (color-preserving) & mosaic
-- [ ] RandAugment and Mixup [Reg+Aug vs Datasize](https://arxiv.org/pdf/2106.10270.pdf)
-- [ ] Specify precision for tensors
-- [ ] Cosine LR scheduling
-- [ ] 
+- [x] Add recommended metrics
+- [x] Data Augmentation: Various resizing, cropping
+- [x] RandAugment and Mixup _Not possible due to color augmentation_ 
+- [ ] Decrease patch-size (match interal resolution in paper)
+- [ ] Decrease patch-size coupled with dilated kernels
+- [ ] Mosaic augmentation
+- [ ] Weight Decay
+- [ ] Increase RAM too speed up training
+- [ ] Train a ResNet model from scratch
+- [ ] Log AP/F1 per class in tensorboard
+- [ ] Long runs with finetuned AdamW and low learning-rate (test every 5 epochs!)
+- [ ] Try different combinations of residual connections
+- [ ] aug=2 but without constant padding (isntead of reflect_padding mode)
 
 Questions
-- [ ] Log AP/F1 per class in tensorboard
-- [ ] ResNet Transfer Learning / from scratch?

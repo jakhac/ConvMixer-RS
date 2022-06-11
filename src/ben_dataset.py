@@ -3,12 +3,11 @@ import numpy as np
 import lmdb
 from pathlib import Path
 from bigearthnet_patch_interface.s2_interface import BigEarthNet_S2_Patch
-from sklearn.compose import TransformedTargetRegressor
 
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
-from torch import Tensor, cat, stack
+from torch import Tensor, cat
 from torch.nn.functional import interpolate
 
 from torchvision import transforms
@@ -111,7 +110,7 @@ def get_transformation_chain(strength):
             ]), p=0.25)
         ])
 
-    # strength_1 + random crp with reflecting-padding
+    # strength_1 + random crop with reflecting-padding
     elif strength == 2:
         return transforms.Compose([
             transforms.RandomVerticalFlip(p=0.5),

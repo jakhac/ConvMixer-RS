@@ -5,7 +5,6 @@
 _h_ and _d_ selected from smaller, but still well performing, model tested in ConvMixer paper
 
 - Ranger21: 
-- SGD: 
 - Adam + AdamW: 
 - Lamb: 
 
