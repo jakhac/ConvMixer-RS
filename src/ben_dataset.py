@@ -98,10 +98,10 @@ class BenDataset(Dataset):
         return label_str
 
 
-def get_transformation_chain(strength):
+def get_transformation_chain(version):
 
     # horizontal/vertical flips and random rotation
-    if strength == 1:
+    if version == 1:
         return transforms.Compose([
             transforms.RandomVerticalFlip(p=0.5),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -110,8 +110,8 @@ def get_transformation_chain(strength):
             ]), p=0.25)
         ])
 
-    # strength_1 + random crop with reflecting-padding
-    elif strength == 2:
+    # version_1 + random crop with reflecting-padding
+    elif version == 2:
         return transforms.Compose([
             transforms.RandomVerticalFlip(p=0.5),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -121,8 +121,8 @@ def get_transformation_chain(strength):
             ]), p=0.25)
         ])
 
-    # strength_2 + higher prob and replace RandomCrop with RandomResizedCrop
-    elif strength == 3:
+    # version_2 + higher prob and replace RandomCrop with RandomResizedCrop
+    elif version == 3:
         return transforms.Compose([
             transforms.RandomVerticalFlip(p=0.5),
             transforms.RandomHorizontalFlip(p=0.5),
@@ -132,5 +132,15 @@ def get_transformation_chain(strength):
             ]), p=0.4)
         ])
 
+    # version_2 but replace reflect with constant 0
+    elif version == 4:
+        return transforms.Compose([
+            transforms.RandomVerticalFlip(p=0.5),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomApply(nn.ModuleList([
+                transforms.RandomCrop(size=120, pad_if_needed=True),
+                transforms.RandomRotation(180)
+            ]), p=0.25)
+        ])
 
     return None

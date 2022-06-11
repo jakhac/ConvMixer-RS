@@ -17,5 +17,10 @@ _d_ is half of smaller 80%-model from ConvMixer paper, _h_ is largest GPU compat
 - Adam + AdamW: almost identical results, early overfit after, 20 epochs sufficient
 - Lamb: good tendecy but likely needs more epochs, approx. 40
 
-## (v?) Add 3 levels of data augmentation
+## (v3) Add 3 levels of data augmentation
 
+- 
+
+## (v4) Decrease patch sizes
+
+- When decreasing patch size (and increasing internal resolution) depth-based ConvMixers beat hiddendim-based ConvMixers => wider patches require deeper ConvMixers

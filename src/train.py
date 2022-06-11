@@ -37,7 +37,7 @@ def _parse_args():
     parser.add_argument('--activation', type=str, default='GELU',
                         help='GELU or ReLU')
     parser.add_argument('--augmentation', type=int, default=0,
-                        help='strength of augmentation on scale of 0 (none) to 3 (strong)')
+                        help='version of augmentation in [0, 4]')
 
 
     # Config parameters
@@ -140,11 +140,6 @@ def run_training(args, writer):
             print(f'\tval_loss decreased ({val_loss_min:.6f} --> {loss:.6f}). Saving this model ...')
             save_checkpoint(args, model, optimizer, e+1)
             val_loss_min = loss
-
-        # for name, param in model.named_parameters():
-        #     writer.add_histogram(name, param, e)
-        #     writer.add_histogram('{}.grad'.format(name), param.grad, e)
-
 
     print('Finished training.\n')
     
