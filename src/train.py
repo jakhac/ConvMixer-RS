@@ -30,8 +30,12 @@ def _parse_args():
                         help='limit number of overall samples (i.e. for dry runs)')
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='momentum of optimizer')
+    parser.add_argument('--decay', type=float, default=None,
+                        help='weight decay')
     parser.add_argument('--lr', type=float, default=0.01,
                         help='learning rate')
+    parser.add_argument('--lr_policy', type=str, default=None,
+                        help='LR scheduler, \'1CycleLR\'')
     parser.add_argument('--optimizer', type=str, default='SGD',
                         help='one of \'SGD\', \'Adam\', \'AdamW\', \'Ranger21\', \'LAMB\'')
     parser.add_argument('--activation', type=str, default='GELU',
@@ -99,9 +103,11 @@ def run_training(args, writer):
         kernel_size=args.k_size,
         patch_size=args.p_size,
         n_classes=19,
-        activation=args.activation
+        activation=args.activation,
+        dilation=args.k_dilation
     )
     optimizer = get_optimizer(model, args, len(train_loader))
+    scheduler = get_scheduler(optimizer, args, len(train_loader))
     criterion = nn.BCEWithLogitsLoss()
 
     args.n_params = sum(p.numel() for p in model.parameters())
@@ -126,7 +132,7 @@ def run_training(args, writer):
 
         # Training
         model.train()
-        loss, train_yyhat = train_batches(train_loader, model, optimizer, criterion, device)
+        loss, train_yyhat = train_batches(train_loader, model, optimizer, criterion, device, scheduler)
         write_metrics(writer, 'train', train_yyhat, loss, e)
 
         # Validation
@@ -167,7 +173,8 @@ def run_tests(args, writer):
         kernel_size=args.k_size,
         patch_size=args.p_size,
         n_classes=19,
-        activation=args.activation
+        activation=args.activation,
+        dilation=args.k_dilation
     )
     criterion = nn.BCEWithLogitsLoss()
 

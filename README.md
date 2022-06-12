@@ -19,6 +19,7 @@ TODOs
 - [ ] Log AP/F1 per class in tensorboard
 - [ ] Long runs with finetuned AdamW and low learning-rate (test every 5 epochs!)
 - [ ] Try different combinations of residual connections
-- [ ] aug=2 but without constant padding (instead of reflect_padding mode)
+- [x] aug=2 but without constant padding (instead of reflect_padding mode)
+- [ ] Investigate wether deeper ConvMixer make up for larger patch_sizes (as hypothesized in paper)
 
 Questions

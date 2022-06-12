@@ -16,12 +16,13 @@ import torch.optim as optim
 import torch_optimizer as torch_optim
 import torch.nn as nn
 from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
+from torch.optim.lr_scheduler import OneCycleLR
 
 from ben_dataset import BenDataset, get_transformation_chain
 from torch.utils.data import DataLoader
 
 
-def train_batches(train_loader, model, optimizer, criterion, dev):
+def train_batches(train_loader, model, optimizer, criterion, dev, scheduler=None):
     """Perform a training step.
     Args:
         train_loader (DataLoader): data loader with training images
@@ -33,7 +34,6 @@ def train_batches(train_loader, model, optimizer, criterion, dev):
         float, List[(y, y_hat)]: loss and label-output tuples
     """
 
-    # total_acc = 0.0
     total_loss = 0.0
     n_batches = len(train_loader)
     yyhat_tuples = []
@@ -53,6 +53,9 @@ def train_batches(train_loader, model, optimizer, criterion, dev):
         total_loss += loss.item()
         loss.backward()
         optimizer.step()
+
+        if scheduler:
+            scheduler.step()
 
     return (total_loss / n_batches), np.asarray(yyhat_tuples)
 
@@ -118,13 +121,16 @@ def get_model_name(args):
 
     timestamp = datetime.now().strftime('%m-%d_%H%M_%S')
 
+    weight_decay = "" if args.decay is None else f"_dec={args.decay}"
+    lr_policy = "" if args.lr_policy is None else f"_lr-pol={args.lr_policy}"
+
     model_arch = f'CvMx-h={args.h}-d={args.depth}-k={args.k_size}-p={args.p_size}'
-    model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}_aug={args.augmentation}'
+    model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}_aug={args.augmentation}{weight_decay}{lr_policy}'
 
     return f'{timestamp}_{model_arch}_{model_config}'
 
 
-def get_optimizer(model, args, n_batches_per_e=None):
+def get_optimizer(model, args, iterations=None):
     """Rreturns an optimizer as defined in args.optimizer.
 
     Args:
@@ -136,20 +142,32 @@ def get_optimizer(model, args, n_batches_per_e=None):
         torch.optimizer: optimizer
     """
 
+    adamW_weight_decay = args.decay if not None else 1e-2
+
     if args.optimizer == 'SGD':
         return optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     elif args.optimizer == 'Adam':
         return optim.Adam(model.parameters(), lr=args.lr)
     elif args.optimizer == 'AdamW':
-        return optim.AdamW(model.parameters(), lr=args.lr)
+        return optim.AdamW(model.parameters(), lr=args.lr, weight_decay=adamW_weight_decay)
     elif args.optimizer == 'Lamb':
         return torch_optim.Lamb(model.parameters(), lr=args.lr)
     elif args.optimizer == 'Ranger21':
-        assert n_batches_per_e
-        return Ranger21(model.parameters(), lr=args.lr, 
-                        num_epochs=args.epochs, num_batches_per_epoch=n_batches_per_e)
+        assert iterations
+        return Ranger21(model.parameters(), lr=args.lr, momentum=args.momentum,
+                        num_epochs=args.epochs, num_batches_per_epoch=iterations)
     else:
         assert False, "Error: get_optimizer() did not find a matching optimizer."
+
+
+def get_scheduler(optimizer, args, iterations):
+
+    if args.lr_policy == "1CycleLR":
+        return OneCycleLR(optimizer, epochs=args.epochs,
+            max_lr=1e-3, steps_per_epoch=iterations, verbose=True)
+
+    return None
+
 
 
 def get_activation(activation):
@@ -172,14 +190,12 @@ def get_activation(activation):
 
 
 def get_dataloader(args, csv_file, apply_transforms, shuffle):
-    """Return a dataloader. If distributed, the dataloader uses a
-    DistributedSampler.
+    """Return a dataloader.
 
     Args:
         args (ArgumentParser): ArgumentParser
         csv_file (str): Absolute path to csv file
         shuffle (bool): True if data needs to be shuffled
-        shuffle (bool): True if data is distributed across multiple devices (false for testing!)
 
     Returns:
         DataLoader: dataloader
