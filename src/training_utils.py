@@ -16,7 +16,7 @@ import torch.optim as optim
 import torch_optimizer as torch_optim
 import torch.nn as nn
 from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
-from torch.optim.lr_scheduler import OneCycleLR
+from torch.optim.lr_scheduler import OneCycleLR, ReduceLROnPlateau
 
 from ben_dataset import BenDataset, get_transformation_chain
 from torch.utils.data import DataLoader
@@ -54,8 +54,8 @@ def train_batches(train_loader, model, optimizer, criterion, dev, scheduler=None
         loss.backward()
         optimizer.step()
 
-        if scheduler:
-            scheduler.step()
+        # if scheduler:
+        #     scheduler.step()
 
     return (total_loss / n_batches), np.asarray(yyhat_tuples)
 
@@ -142,7 +142,7 @@ def get_optimizer(model, args, iterations=None):
         torch.optimizer: optimizer
     """
 
-    adamW_weight_decay = args.decay if not None else 1e-2
+    adamW_weight_decay = args.decay if args.decay is not None else 1e-2
 
     if args.optimizer == 'SGD':
         return optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
@@ -165,6 +165,10 @@ def get_scheduler(optimizer, args, iterations):
     if args.lr_policy == "1CycleLR":
         return OneCycleLR(optimizer, epochs=args.epochs,
             max_lr=1e-3, steps_per_epoch=iterations, verbose=True)
+    elif args.lr_policy == "RLROP":
+        return ReduceLROnPlateau(optimizer, patience=3, threshold=5e-4,
+            verbose=True, factor=0.25)
+
 
     return None
 
@@ -248,7 +252,7 @@ def setup_paths_and_hparams(args):
         # args.run_tests_n = 2
 
 
-def save_checkpoint(args, model, optimizer, epoch):
+def save_checkpoint(args, model, optimizer, epoch, exist_ok=False):
     """Save a checkpoint containing model weights, optimizer state and 
     last finished epoch.
 
@@ -260,6 +264,8 @@ def save_checkpoint(args, model, optimizer, epoch):
     """
 
     p = f'{args.model_ckpt_dir}/{epoch}.ckpt'
+    assert exist_ok or not os.path.isfile(p)
+
     torch.save({
         'model_state': model.state_dict(),
         'optimizer': optimizer.state_dict(),
@@ -342,7 +348,7 @@ def write_metrics(writer, tag, yy_hat, loss, e):
     print(f"Loss/{tag} {loss:.4f}")
     
     # Accuracy
-    acc = accuracy_score(y_hat_predict, y)
+    acc = accuracy_score(y, y_hat_predict)
     writer.add_scalar(f"Acc/{tag}", acc, e)
     print(f"Acc/{tag} {acc:.4f}")
     print()

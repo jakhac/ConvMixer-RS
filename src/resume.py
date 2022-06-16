@@ -10,7 +10,7 @@ from torch.nn import DataParallel as DP
 from ben_dataset import *
 from conv_mixer import *
 from training_utils import *
-
+from benedict import benedict
 
 def _parse_args():
     """Parse arguments and return ArgumentParser obj
@@ -22,71 +22,83 @@ def _parse_args():
     parser = argparse.ArgumentParser(description="ConvMixer Parameters")
 
     # Training parameters
-    parser.add_argument('--epochs', type=int, default=25,
-                        help='number of epochs')
-    parser.add_argument('--batch_size', type=int, default=256,
-                        help='batch size (for train, valid, test)')
-    parser.add_argument('--ds_size', type=int, default=None,
-                        help='limit number of overall samples (i.e. for dry runs)')
-    parser.add_argument('--momentum', type=float, default=0.9,
-                        help='momentum of optimizer')
-    parser.add_argument('--decay', type=float, default=None,
-                        help='weight decay')
-    parser.add_argument('--lr', type=float, default=0.01,
-                        help='learning rate')
-    parser.add_argument('--lr_policy', type=str, default=None,
-                        help='LR scheduler, \'1CycleLR\', \'RLROP\'')
-    parser.add_argument('--optimizer', type=str, default='SGD',
-                        help='one of \'SGD\', \'Adam\', \'AdamW\', \'Ranger21\', \'LAMB\'')
-    parser.add_argument('--activation', type=str, default='GELU',
-                        help='GELU or ReLU')
-    parser.add_argument('--augmentation', type=int, default=0,
-                        help='version of augmentation in [0, 4]')
-
-
-    # Config parameters
+    parser.add_argument('--new_epochs', type=int, default=None,
+                        help='number additional epochs to train')
+    parser.add_argument('--model_dir', type=str, default=None,
+                        help='path to model directory')
+    parser.add_argument('--ckpt_filename', type=str, default=None,
+                        help='name of model (usually <epoch>.ckpt)')
     parser.add_argument('--dry_run', default=False,
                         help='limit ds size and epochs for testing purpose')
-    parser.add_argument('--exp_name', type=str, default='test',
-                        help='save several runs of an experiment in one dir')
-    parser.add_argument('--save_training', default=True,
-                        help='save checkpoints when valid_loss decreases')
-    parser.add_argument('--run_tests', type=bool, default=True,
-                        help='run best models on test data')
-    parser.add_argument('--run_tests_n', type=int, default=5,
-                        help='test the n best models on test data')
-
-
-    # Model parameters
-    parser.add_argument('--h', type=int, default=128,
-                        help='hidden dimension')
-    parser.add_argument('--depth', type=int, default=8,
-                        help='number of ConvMixer layers')
-    parser.add_argument('--k_size', type=int, default=9,
-                        help='kernel size in ConvMixer layers')
-    parser.add_argument('--p_size', type=int, default=7,
-                        help='patch size')
-    parser.add_argument('--k_dilation', type=int, default=1,
-                        help='dilation of convolutions in ConvMixer layers')
 
     return parser.parse_args()
 
 
 def main():
 
+
     args = _parse_args()
+    assert args.new_epochs, "Need to specify number of additional epochs to train."
+    assert args.model_dir, "Need to specify model_dir."
+    assert args.ckpt_filename, "Need to specify ckpt_filename."
+
+    with open(args.model_dir + "/args.yaml", "r") as file:
+        args_dict = yaml.load(file, Loader=yaml.FullLoader)
+
+    print("Dict", args_dict)
+
+    args.batch_size = args_dict['batch_size']
+    args.ds_size = args_dict['ds_size']
+    args.augmentation = args_dict['augmentation']
+    args.h = args_dict['h']
+    args.depth = args_dict['depth']
+    args.k_size = args_dict['k_size']
+    args.p_size = args_dict['p_size']
+    args.k_dilation = args_dict['k_dilation']
+    args.activation = args_dict['activation']
+    args.n_params = args_dict['n_params']
+    args.n_params_trainable = args_dict['n_params_trainable']
+    args.lr = args_dict['lr']
+    args.momentum = args_dict['momentum']
+    args.optimizer = args_dict['optimizer']
+    args.decay = None
+    args.epochs = int(args_dict['epochs']) + int(args.new_epochs)
+    args.save_training = args_dict['save_training']
+    args.run_tests_n = args_dict['run_tests_n']
+    args.run_tests = args_dict['run_tests']
 
     #### Path and further hparams settings ###
-    setup_paths_and_hparams(args)
+    # setup_paths_and_hparams(args)
+    load_dotenv('../.env')
+    args.BEN_LMDB_PATH = os.environ.get("BEN_LMDB_PATH")
+    args.TRAIN_CSV_FILE = os.environ.get("TRAIN_CSV")
+    args.VALID_CSV_FILE = os.environ.get("VAL_CSV")
+    args.TEST_CSV_FILE = os.environ.get("TEST_CSV")
+    args.PATH_TO_RUNS = os.environ.get("PATH_TO_RUNS")
+    args.SPLIT = os.environ.get("SPLIT")
+
+    if args.dry_run:
+        args.ds_size = 40
+        args.batch_size = 20
+        args.lr = 0.1
+        args.run_tests = True
+        # args.run_tests_n = 2
+
+    args.model_ckpt_dir = args.model_dir + '/ckpt'
+    assert os.path.isdir(args.model_ckpt_dir)
+
+    args.path_to_ckpt_file = args.model_ckpt_dir + '/' + args.ckpt_filename
+    assert os.path.isfile(args.path_to_ckpt_file)
+
 
     writer = SummaryWriter(log_dir=args.model_dir)
-    run_training(args, writer)
+    resume_training(args, writer)
 
     if args.run_tests: run_tests(args, writer)
     writer.close()
 
 
-def run_training(args, writer):
+def resume_training(args, writer,):
 
     print("Start training ...")
     torch.manual_seed(42)
@@ -106,25 +118,23 @@ def run_training(args, writer):
         activation=args.activation,
         dilation=args.k_dilation
     )
+
     torch.cuda.empty_cache()
     model.to(device)
     model = DP(model)
 
     optimizer = get_optimizer(model, args, len(train_loader))
-    scheduler = get_scheduler(optimizer, args, len(train_loader))
     criterion = nn.BCEWithLogitsLoss()
 
-    args.n_params = sum(p.numel() for p in model.parameters())
-    args.n_params_trainable = sum(p.numel() for p in model.parameters())
-
-    # Dump arguments into yaml file
-    with open(f'{args.model_dir}/args.yaml', 'w') as outfile:
-        yaml.dump(args.__dict__, outfile, default_flow_style=False)
+    state_dict = torch.load(args.path_to_ckpt_file)
+    model.load_state_dict(state_dict['model_state'])
+    optimizer.load_state_dict(state_dict['optimizer'])
+    args.start_epoch = state_dict['epoch']
 
     # Main training loop
     val_loss_min = np.inf
-    print('Start main training loop.')
-    for e in range(args.epochs):
+    print(f'Resume main training loop from epochs {args.start_epoch} to {args.epochs}.')
+    for e in range(args.start_epoch, args.epochs):
 
         print(f'\n[{e+1:3d}/{args.epochs:3d}]')
 
@@ -138,10 +148,6 @@ def run_training(args, writer):
         loss, valid_yyhat = valid_batches(valid_loader, model, criterion, device)
         write_metrics(writer, 'valid', valid_yyhat, loss, e)
 
-        if scheduler:
-            scheduler.step(loss)
-
-
         # Checkpoints
         if args.save_training and loss < val_loss_min:
             print(f'\tval_loss decreased ({val_loss_min:.6f} --> {loss:.6f}). Saving this model ...')
@@ -152,7 +158,7 @@ def run_training(args, writer):
     
     if args.save_training:
         print('Saving final model ...')
-        save_checkpoint(args, model, optimizer, args.epochs)
+        save_checkpoint(args, model, optimizer, args.epochs, exist_ok=True)
 
 
 def run_tests(args, writer):
@@ -188,6 +194,11 @@ def run_tests(args, writer):
     print(f'Following epochs are tested: {model_names}')
 
     for model_name in model_names:
+
+        if int(model_name) <= args.start_epoch:
+            print("Skip test model. Already tested model-epoch", model_name)
+            continue
+
         p = f'{args.model_ckpt_dir}/{model_name}.ckpt'
         load_checkpoint(model, p)
 

@@ -13,13 +13,14 @@ TODOs
 - [x] Decrease patch-size (match interal resolution in paper)
 - [ ] Decrease patch-size coupled with dilated kernels
 - [ ] Mosaic augmentation
-- [ ] Weight Decay
+- [x] Weight Decay
 - [x] Increase RAM too speed up training
 - [ ] Train a ResNet model from scratch
 - [ ] Log AP/F1 per class in tensorboard
-- [ ] Long runs with finetuned AdamW and low learning-rate (test every 5 epochs!)
+- [x] Long runs with finetuned AdamW and low learning-rate
 - [ ] Try different combinations of residual connections
 - [x] aug=2 but without constant padding (instead of reflect_padding mode)
 - [ ] Investigate wether deeper ConvMixer make up for larger patch_sizes (as hypothesized in paper)
+- [ ] Measure FLOPS or throughput
 
 Questions
