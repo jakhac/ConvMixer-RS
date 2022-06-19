@@ -116,8 +116,8 @@ def get_transformation_chain(version):
             transforms.RandomVerticalFlip(p=0.5),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomApply(nn.ModuleList([
-                transforms.RandomCrop(size=120, pad_if_needed=True, padding_mode='reflect'),
-                transforms.RandomRotation(180)
+                #TODO transforms.RandomCrop(size=120, pad_if_needed=True, padding_mode='reflect'),
+                transforms.RandomRotation(180) 
             ]), p=0.25)
         ])
 

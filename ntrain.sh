@@ -60,3 +60,32 @@
 ### v9 based on v8 (p_size=5, Ranger21 LR=1e-4) and v6 (k_size=5/7)
 # sbatch train.sh "--epochs=35 --batch_size=256 --lr=1e-4 --h=960 --depth=8 --p_size=5 --k_size=5 --optimizer=Ranger21 --augmentation=2 --exp_name=v9-pk_sizes"
 # sbatch train.sh "--epochs=35 --batch_size=256 --lr=1e-4 --h=960 --depth=8 --p_size=5 --k_size=7 --optimizer=Ranger21 --augmentation=2 --exp_name=v9-pk_sizes"
+
+
+### v10 Hdim adjustement
+# sbatch train.sh "--epochs=40 --batch_size=256 --lr=1e-4 --h=1024 --depth=8 --p_size=5 --k_size=5 --optimizer=Ranger21 --augmentation=2 --exp_name=v10-hdim-inc"
+
+
+### v11 Residual adjustement
+# sbatch train.sh "--epochs=40 --batch_size=256 --lr=1e-4 --h=960 --depth=8 --p_size=5 --k_size=5 --optimizer=Ranger21 --augmentation=2 --residual=0 --exp_name=v11-residual"
+# sbatch train.sh "--epochs=40 --batch_size=256 --lr=1e-4 --h=960 --depth=8 --p_size=5 --k_size=5 --optimizer=Ranger21 --augmentation=2 --residual=2 --exp_name=v11-residual"
+# sbatch train.sh "--epochs=40 --batch_size=256 --lr=1e-4 --h=960 --depth=8 --p_size=5 --k_size=5 --optimizer=Ranger21 --augmentation=2 --residual=3 --exp_name=v11-residual"
+
+
+### v12 dropouts
+# sbatch train.sh "--epochs=40 --batch_size=256 --lr=1e-4 --h=768 --depth=8 --p_size=5 --k_size=5 --optimizer=Ranger21 --augmentation=2 --drop=0.1 --exp_name=v12-dropouts"
+# sbatch train.sh "--epochs=40 --batch_size=256 --lr=1e-4 --h=768 --depth=8 --p_size=5 --k_size=5 --optimizer=Ranger21 --augmentation=2 --drop=0.25 --exp_name=v12-dropouts"
+
+
+### v13 Activation ReLU
+# sbatch train.sh "--epochs=40 --batch_size=256 --lr=1e-4 --h=1024 --depth=8 --p_size=5 --k_size=5 --optimizer=Ranger21 --augmentation=2 --activation=ReLU --exp_name=v13-relu"
+
+
+### v14 Reproduce v9 results with AdamW
+# sbatch train.sh "--epochs=40 --batch_size=256 --lr=1e-4 --h=960 --depth=8 --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --augmentation=2 --exp_name=v14-AdamW"
+# sbatch train.sh "--epochs=40 --batch_size=256 --lr=1e-4 --h=960 --depth=8 --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=exp --augmentation=2 --exp_name=v14-AdamW"
+
+
+### v15 Finetune AdamW with ReLU and h=1024
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --h=1024 --depth=8 --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v15-AdamW_relu"
+# sbatch train.sh "--epochs=35 --batch_size=256 --lr=5e-5 --h=1024 --depth=8 --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v15-AdamW_relu"

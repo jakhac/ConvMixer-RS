@@ -2,6 +2,7 @@ import yaml
 import argparse
 import numpy as np
 
+import pytorch_warmup as warmup
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
@@ -36,6 +37,10 @@ def _parse_args():
                         help='learning rate')
     parser.add_argument('--lr_policy', type=str, default=None,
                         help='LR scheduler, \'1CycleLR\', \'RLROP\'')
+    parser.add_argument('--lr_warmup', type=int, default=2000,
+                        help='number of warump steps')
+    parser.add_argument('--lr_warmup_fn', type=str, default='linear',
+                        help='warmup function, e.g. \'linear\', \'exp\'')
     parser.add_argument('--optimizer', type=str, default='SGD',
                         help='one of \'SGD\', \'Adam\', \'AdamW\', \'Ranger21\', \'LAMB\'')
     parser.add_argument('--activation', type=str, default='GELU',
@@ -68,6 +73,11 @@ def _parse_args():
                         help='patch size')
     parser.add_argument('--k_dilation', type=int, default=1,
                         help='dilation of convolutions in ConvMixer layers')
+    parser.add_argument('--residual', type=int, default=1,
+                        help='set 0-th bit for depthwise (=1) / set 1-th bit (=2) for pointwise / both for both (=4)')
+    parser.add_argument('--drop', type=float, default=0.0,
+                        help='set dropout probability in mixer layers, default is 0.0')
+
 
     return parser.parse_args()
 
@@ -104,14 +114,24 @@ def run_training(args, writer):
         patch_size=args.p_size,
         n_classes=19,
         activation=args.activation,
-        dilation=args.k_dilation
+        dilation=args.k_dilation,
+        residual=args.residual,
+        drop=args.drop
     )
     torch.cuda.empty_cache()
     model.to(device)
     model = DP(model)
 
     optimizer = get_optimizer(model, args, len(train_loader))
-    scheduler = get_scheduler(optimizer, args, len(train_loader))
+    num_steps = len(train_loader) * args.epochs
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps)
+    
+    if args.lr_warmup_fn == 'linear':
+        warmup_scheduler = warmup.LinearWarmup(optimizer, warmup_period=args.lr_warmup)
+    elif args.lr_warmup_fn == 'exp':
+        warmup_scheduler = warmup.ExponentialWarmup(optimizer, warmup_period=args.lr_warmup)
+
+    # scheduler = get_scheduler(optimizer, args, len(train_loader))
     criterion = nn.BCEWithLogitsLoss()
 
     args.n_params = sum(p.numel() for p in model.parameters())
@@ -130,7 +150,8 @@ def run_training(args, writer):
 
         # Training
         model.train()
-        loss, train_yyhat = train_batches(train_loader, model, optimizer, criterion, device)
+        loss, train_yyhat = train_batches(train_loader, model, optimizer, criterion, device,
+            scheduler=lr_scheduler, warmup_scheduler=warmup_scheduler)
         write_metrics(writer, 'train', train_yyhat, loss, e)
 
         # Validation
@@ -138,8 +159,8 @@ def run_training(args, writer):
         loss, valid_yyhat = valid_batches(valid_loader, model, criterion, device)
         write_metrics(writer, 'valid', valid_yyhat, loss, e)
 
-        if scheduler:
-            scheduler.step(loss)
+        # if scheduler:
+        #     scheduler.step(loss)
 
 
         # Checkpoints
@@ -175,7 +196,9 @@ def run_tests(args, writer):
         patch_size=args.p_size,
         n_classes=19,
         activation=args.activation,
-        dilation=args.k_dilation
+        dilation=args.k_dilation,
+        residual=args.residual,
+        drop=args.drop
     )
     criterion = nn.BCEWithLogitsLoss()
 

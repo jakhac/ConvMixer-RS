@@ -11,16 +11,16 @@ TODOs
 - [x] Data Augmentation: Various resizing, cropping
 - [x] RandAugment and Mixup _Not possible due to color augmentation_ 
 - [x] Decrease patch-size (match interal resolution in paper)
-- [ ] Decrease patch-size coupled with dilated kernels
-- [ ] Mosaic augmentation
+- [x] _cancelled as lower kernels work better_Decrease patch-size coupled with dilated kernels
 - [x] Weight Decay
 - [x] Increase RAM too speed up training
-- [ ] Train a ResNet model from scratch
-- [ ] Log AP/F1 per class in tensorboard
 - [x] Long runs with finetuned AdamW and low learning-rate
-- [ ] Try different combinations of residual connections
+- [x] Try different combinations of residual connections
 - [x] aug=2 but without constant padding (instead of reflect_padding mode)
-- [ ] Investigate wether deeper ConvMixer make up for larger patch_sizes (as hypothesized in paper)
+- [ ] Train a ResNet model from scratch
+- [ ] Do deeper ConvMixer compensate larger psize (hypo to paper)
 - [ ] Measure FLOPS or throughput
+- [ ] Add Dropout Layers
+- [ ] Get Torchmetrics running for 90+ run
 
 Questions

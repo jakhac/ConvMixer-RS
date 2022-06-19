@@ -1,6 +1,4 @@
-from genericpath import exists
 import os
-from pydoc import apropos
 from dotenv import load_dotenv
 from natsort import natsorted
 from pathlib import Path
@@ -22,7 +20,7 @@ from ben_dataset import BenDataset, get_transformation_chain
 from torch.utils.data import DataLoader
 
 
-def train_batches(train_loader, model, optimizer, criterion, dev, scheduler=None):
+def train_batches(train_loader, model, optimizer, criterion, dev, scheduler=None, warmup_scheduler=None):
     """Perform a training step.
     Args:
         train_loader (DataLoader): data loader with training images
@@ -54,8 +52,8 @@ def train_batches(train_loader, model, optimizer, criterion, dev, scheduler=None
         loss.backward()
         optimizer.step()
 
-        # if scheduler:
-        #     scheduler.step()
+        with warmup_scheduler.dampening():
+            scheduler.step()
 
     return (total_loss / n_batches), np.asarray(yyhat_tuples)
 
@@ -123,9 +121,12 @@ def get_model_name(args):
 
     weight_decay = "" if args.decay is None else f"_dec={args.decay}"
     lr_policy = "" if args.lr_policy is None else f"_lr-pol={args.lr_policy}"
+    res = "" if args.residual == 1 else f"_res={args.residual}"
+    drop = "" if args.drop == 0.0 else f"_drop={args.drop}"
+    warmup_fn = f"_wfn={args.lr_warmup_fn}-{args.lr_warmup}"
 
     model_arch = f'CvMx-h={args.h}-d={args.depth}-k={args.k_size}-p={args.p_size}'
-    model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}_aug={args.augmentation}{weight_decay}{lr_policy}'
+    model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}_aug={args.augmentation}{weight_decay}{lr_policy}{res}{drop}{warmup_fn}'
 
     return f'{timestamp}_{model_arch}_{model_config}'
 
@@ -264,7 +265,7 @@ def save_checkpoint(args, model, optimizer, epoch, exist_ok=False):
     """
 
     p = f'{args.model_ckpt_dir}/{epoch}.ckpt'
-    assert exist_ok or not os.path.isfile(p)
+    # assert exist_ok or not os.path.isfile(p)
 
     torch.save({
         'model_state': model.state_dict(),
