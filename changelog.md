@@ -69,7 +69,7 @@ Smaller patch-size overfit fastly, however, they theoretically should improve pe
 => Re-run with LR 1e-5, 50-55 epochs, aug=2
 
 
-## v8 Combine augmentation, p_size, optimizer findings
+## (v8) Combine augmentation, p_size, optimizer findings
 
 AdamW due to training speed
 - *aug=2 + p_size=5 + AdamW + LR=1e-5 , epochs=50 + dec=0.05
@@ -78,6 +78,56 @@ AdamW due to training speed
 
 => Combine best run (*) with smaller kernel sizes (see v9)
 
-## v9 based on v8 and v6
+## (v9) based on v8 and v6
 
-- TBD
+Combine everything above in a Ranger21 setup
+- Performs best out of previous versions
+
+## (v10) increase hdim to push performance
+
+Pack the GPU RAM completely
+- gives a small performance boost
+
+## (v11) Residuals
+
+Try out all combinations of residual connections
+- Default one performs best
+
+## (v12) Droputs
+
+Try out dropout layer in depthwise convolutions
+- dropouts worsen the performance
+
+## (v13) ReLU vs GELU
+
+- ReLU has slight edge towards GELU (0.1%)
+
+## (v14) Reproduce v9 results with AdamW
+
+- Warmup, CosineLR scheduler, lr=1e-4 works perfectly
+
+## (v15) Combine findings of v10 - v14
+
+- New benchmark record
+
+## (v16) Try to make deep ConvMixers work
+
+We compare to the current best config/setup from v15 and only change hdim and depth. We want to measure performance difference when lowering the hdim, and then measure if (how well) increasing depth can make up for it.
+- benchmark: h=1024 p=5 depth=8 
+- for h=7 try depth in { 8, 16, 24}
+- for p=9 try depth in { 8, 16, 24}
+
+## (v17)
+
+We compare to the current best config/setup from v15 and only change patchsize and depth. We want to measure performance difference when increasing psize, and then measure if (how well) increasing depth can make up for it.
+- benchmark: hdim=512 p=5 depth=8 
+- for p=7 try depth in { 8, 12, 16, 20, 24}
+- for p=9 try depth in { 8, 16, 24}
+
+## (v18) Dilated Kernels
+
+
+## (v19) Weight Decay
+
+
+## (v20) Add normalizations

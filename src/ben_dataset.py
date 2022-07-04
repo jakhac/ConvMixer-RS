@@ -28,7 +28,7 @@ LABELS = [
 
 class BenDataset(Dataset):
 
-    def __init__(self, csv_file, lmdb_path, transforms=None, size=None):
+    def __init__(self, csv_file, lmdb_path, transforms=None, size=None, img_size=120):
         """
         Load csv and connect to lmdb file.
 
@@ -40,7 +40,8 @@ class BenDataset(Dataset):
 
         assert(Path(csv_file).exists())
         assert(Path(lmdb_path).exists())
-        
+
+        self.img_size = img_size
         self.size = size
         self.patch_frame = pd.read_csv(Path(csv_file))
         self.lmdb_path = Path(lmdb_path)
@@ -73,16 +74,32 @@ class BenDataset(Dataset):
         # Convert to tensors and interpolate lower resolution
         bands_10m_torch = Tensor(np.float32(bands_10m)).unsqueeze(dim=0)
         bands_20m_torch = Tensor(np.float32(bands_20m)).unsqueeze(dim=0)
-        bands_20m_torch = interpolate(bands_20m_torch, bands_10m.shape[-2:], mode="bicubic")
 
+        bands_20m_torch = interpolate(bands_20m_torch, bands_10m.shape[-2:], mode="bicubic")
         bands_stacked_torch = cat((bands_10m_torch, bands_20m_torch), 1)
-        
+
+        # Interpolate again, required for some models (SwinTransformer)
+        bands_stacked_torch = interpolate(bands_stacked_torch, size=(self.img_size, self.img_size), mode='bicubic')
+
+        # Normalization according to values found in:
+        # https://git.tu-berlin.de/rsim/starter-kit-bigearthnet/-/blob/main/pytorch_datasets.py
+        norm_transform = transforms.Normalize(mean=(
+                429.9430203, 614.21682446, 590.23569706, 2218.94553375, 950.68368468, 1792.46290469, 2075.46795189,
+                2266.46036911, 1594.42694882, 1009.32729131
+            ), std=(
+                572.41639287, 582.87945694, 675.88746967, 1365.45589904, 729.89827633, 1096.01480586, 1273.45393088,
+                1356.13789355, 1079.19066363, 818.86747235
+            )
+        )
+        bands_stacked_torch = norm_transform(bands_stacked_torch)
+
+
         str_labels = dict(s2_patch.__stored_args__.items())['new_labels']
         one_hot_labels = self.mlb.transform([str_labels])[0]
 
         if self.transforms:
             bands_stacked_torch[0] = self.transforms(bands_stacked_torch[0])
-        
+
         return bands_stacked_torch[0], torch.from_numpy(one_hot_labels).type(torch.FloatTensor)
 
 

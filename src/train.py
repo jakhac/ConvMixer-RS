@@ -35,8 +35,8 @@ def _parse_args():
                         help='weight decay')
     parser.add_argument('--lr', type=float, default=0.01,
                         help='learning rate')
-    parser.add_argument('--lr_policy', type=str, default=None,
-                        help='LR scheduler, \'1CycleLR\', \'RLROP\'')
+    parser.add_argument('--lr_schedule', type=int, default=1,
+                        help='Apply LR scheduling')
     parser.add_argument('--lr_warmup', type=int, default=2000,
                         help='number of warump steps')
     parser.add_argument('--lr_warmup_fn', type=str, default='linear',
@@ -54,15 +54,19 @@ def _parse_args():
                         help='limit ds size and epochs for testing purpose')
     parser.add_argument('--exp_name', type=str, default='test',
                         help='save several runs of an experiment in one dir')
-    parser.add_argument('--save_training', default=True,
+    parser.add_argument('--save_training', type=int, default=1,
                         help='save checkpoints when valid_loss decreases')
-    parser.add_argument('--run_tests', type=bool, default=True,
+    parser.add_argument('--run_tests', type=int, default=1,
                         help='run best models on test data')
     parser.add_argument('--run_tests_n', type=int, default=5,
                         help='test the n best models on test data')
+    parser.add_argument('--img_size', type=int, default=120,
+                        help='image resolution that is processed in models')
+    parser.add_argument('--arch', type=str, default='CvMx',
+                        help='specify the model, \'CvMx\',  \'ResNet[18, 50]\', \'ViT\', \'Swin\'')
 
 
-    # Model parameters
+    # (CvMx-) Model parameters
     parser.add_argument('--h', type=int, default=128,
                         help='hidden dimension')
     parser.add_argument('--depth', type=int, default=8,
@@ -74,10 +78,20 @@ def _parse_args():
     parser.add_argument('--k_dilation', type=int, default=1,
                         help='dilation of convolutions in ConvMixer layers')
     parser.add_argument('--residual', type=int, default=1,
-                        help='set 0-th bit for depthwise (=1) / set 1-th bit (=2) for pointwise / both for both (=4)')
-    parser.add_argument('--drop', type=float, default=0.0,
-                        help='set dropout probability in mixer layers, default is 0.0')
+                        help='set 0-th bit for depthwise (=1) / set 1-th bit (=2) for pointwise / both for both (=3)')
+    parser.add_argument('--drop', type=float, default=0.,
+                        help='set dropout probability in mixer layers, default is 0.')
 
+
+    # ViT Model parameters
+    parser.add_argument('--embed_dim', type=int, default=768,
+                        help='patch embedding dimension')
+    parser.add_argument('--num_heads', type=int, default=12,
+                        help='number of self-attention heads')
+    parser.add_argument('--attn_drop', type=float, default=0.,
+                        help='attention dropout rate')
+    parser.add_argument('--path_drop', type=float, default=0.,
+                        help='attention dropout rate')
 
     return parser.parse_args()
 
@@ -86,7 +100,7 @@ def main():
 
     args = _parse_args()
 
-    #### Path and further hparams settings ###
+    # Path and further hparams settings
     setup_paths_and_hparams(args)
 
     writer = SummaryWriter(log_dir=args.model_dir)
@@ -106,32 +120,14 @@ def run_training(args, writer):
 
     # Create model and move to GPU(s)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = ConvMixer(
-        10,
-        args.h,
-        args.depth,
-        kernel_size=args.k_size,
-        patch_size=args.p_size,
-        n_classes=19,
-        activation=args.activation,
-        dilation=args.k_dilation,
-        residual=args.residual,
-        drop=args.drop
-    )
+    model = get_model(args)
     torch.cuda.empty_cache()
     model.to(device)
     model = DP(model)
 
     optimizer = get_optimizer(model, args, len(train_loader))
     num_steps = len(train_loader) * args.epochs
-    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps)
-    
-    if args.lr_warmup_fn == 'linear':
-        warmup_scheduler = warmup.LinearWarmup(optimizer, warmup_period=args.lr_warmup)
-    elif args.lr_warmup_fn == 'exp':
-        warmup_scheduler = warmup.ExponentialWarmup(optimizer, warmup_period=args.lr_warmup)
-
-    # scheduler = get_scheduler(optimizer, args, len(train_loader))
+    lr_scheduler, warmup_scheduler = get_scheduler(args, optimizer, num_steps)
     criterion = nn.BCEWithLogitsLoss()
 
     args.n_params = sum(p.numel() for p in model.parameters())
@@ -159,9 +155,6 @@ def run_training(args, writer):
         loss, valid_yyhat = valid_batches(valid_loader, model, criterion, device)
         write_metrics(writer, 'valid', valid_yyhat, loss, e)
 
-        # if scheduler:
-        #     scheduler.step(loss)
-
 
         # Checkpoints
         if args.save_training and loss < val_loss_min:
@@ -177,8 +170,8 @@ def run_training(args, writer):
 
 
 def run_tests(args, writer):
-    """Run the {run_test_n} best models based on validation loss
-    on testdata.
+    """Run {args.run_test_n} best models based on validation loss
+    on test data.
 
     Args:
         args (ArgumentParser): args
@@ -188,18 +181,7 @@ def run_tests(args, writer):
     print('\nStart testing.')
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = ConvMixer(
-        10,
-        args.h,
-        args.depth,
-        kernel_size=args.k_size,
-        patch_size=args.p_size,
-        n_classes=19,
-        activation=args.activation,
-        dilation=args.k_dilation,
-        residual=args.residual,
-        drop=args.drop
-    )
+    model = get_model(args)
     criterion = nn.BCEWithLogitsLoss()
 
     torch.cuda.empty_cache()

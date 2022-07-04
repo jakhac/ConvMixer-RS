@@ -10,6 +10,8 @@ from datetime import datetime
 from sklearn.metrics import average_precision_score, f1_score, accuracy_score
 
 from ranger21 import Ranger21
+import pytorch_warmup as warmup
+
 import torch.optim as optim
 import torch_optimizer as torch_optim
 import torch.nn as nn
@@ -19,15 +21,29 @@ from torch.optim.lr_scheduler import OneCycleLR, ReduceLROnPlateau
 from ben_dataset import BenDataset, get_transformation_chain
 from torch.utils.data import DataLoader
 
+from ben_dataset import *
+import conv_mixer as CVMX
+from training_utils import *
+
+import timm
+from timm.models.vision_transformer import VisionTransformer
+# from timm.models.swin_transformer import SwinTransformer
+from timm.models.swin_transformer_v2 import SwinTransformerV2 as SwinTransformer
+
+
 
 def train_batches(train_loader, model, optimizer, criterion, dev, scheduler=None, warmup_scheduler=None):
     """Perform a training step.
+
     Args:
         train_loader (DataLoader): data loader with training images
         model (Model): model
         optimizer (optimizer): optimizer
         criterion (criterion): loss function
         dev (str): device, either cuda or cpu
+        scheduler (Scheduler, optional): LR scheduler. Defaults to None.
+        warmup_scheduler (Scheduler, optional): Warmup scheduler. Defaults to None.
+
     Returns:
         float, List[(y, y_hat)]: loss and label-output tuples
     """
@@ -52,8 +68,9 @@ def train_batches(train_loader, model, optimizer, criterion, dev, scheduler=None
         loss.backward()
         optimizer.step()
 
-        with warmup_scheduler.dampening():
-            scheduler.step()
+        if warmup_scheduler and scheduler:
+            with warmup_scheduler.dampening():
+                scheduler.step()
 
     return (total_loss / n_batches), np.asarray(yyhat_tuples)
 
@@ -119,20 +136,30 @@ def get_model_name(args):
 
     timestamp = datetime.now().strftime('%m-%d_%H%M_%S')
 
-    weight_decay = "" if args.decay is None else f"_dec={args.decay}"
-    lr_policy = "" if args.lr_policy is None else f"_lr-pol={args.lr_policy}"
-    res = "" if args.residual == 1 else f"_res={args.residual}"
-    drop = "" if args.drop == 0.0 else f"_drop={args.drop}"
-    warmup_fn = f"_wfn={args.lr_warmup_fn}-{args.lr_warmup}"
+    warmup_fn = f"_wfn={args.lr_warmup_fn}-{args.lr_warmup}" if args.lr_schedule else ""
 
-    model_arch = f'CvMx-h={args.h}-d={args.depth}-k={args.k_size}-p={args.p_size}'
-    model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}_aug={args.augmentation}{weight_decay}{lr_policy}{res}{drop}{warmup_fn}'
+    if args.arch == 'CvMx':
+        weight_decay = "" if args.decay is None else f"_dec={args.decay}"
+        res = "" if args.residual == 1 else f"_res={args.residual}"
+        drop = "" if args.drop == 0.0 else f"_drop={args.drop}"
+        dil = "" if args.k_dilation == 1 else f"_dil={args.k_dilation}"
 
-    return f'{timestamp}_{model_arch}_{model_config}'
+        model_arch = f'{args.arch}-h={args.h}-d={args.depth}-k={args.k_size}-p={args.p_size}'
+        model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}_aug={args.augmentation}{weight_decay}{res}{drop}{warmup_fn}{dil}'
+        return f'{timestamp}_{model_arch}_{model_config}'
+    elif args.arch == 'ResNet50' or args.arch == 'ResNet18':
+        return f'{timestamp}_{args.arch}_batch={args.batch_size}_lr={args.lr}_{args.optimizer}_aug={args.augmentation}{warmup_fn}'
+    elif args.arch == 'ViT':
+
+        # Default is:
+        # --p_size=16 --embed_dim=768 --depth=12 --attn_drop=0 --drop=0 --num_heads=12
+
+        return f'{timestamp}_{args.arch}_p={args.p_size}_emb={args.embed_dim}_d={args.depth}_heads_{args.num_heads}_drop={args.drop}_attn-drop={args.attn_drop}_path-drop{args.path_drop}_batch={args.batch_size}_lr={args.lr}_{args.optimizer}_aug={args.augmentation}{warmup_fn}'
+
 
 
 def get_optimizer(model, args, iterations=None):
-    """Rreturns an optimizer as defined in args.optimizer.
+    """Returns an optimizer as defined in args.optimizer.
 
     Args:
         model (Model): pytorch model
@@ -161,18 +188,31 @@ def get_optimizer(model, args, iterations=None):
         assert False, "Error: get_optimizer() did not find a matching optimizer."
 
 
-def get_scheduler(optimizer, args, iterations):
+def get_scheduler(args, optimizer, num_steps):
+    """Return lr scheduler and warmup scheduler. Returns (None, None) if 
+    args.lr_schedule is False.
 
-    if args.lr_policy == "1CycleLR":
-        return OneCycleLR(optimizer, epochs=args.epochs,
-            max_lr=1e-3, steps_per_epoch=iterations, verbose=True)
-    elif args.lr_policy == "RLROP":
-        return ReduceLROnPlateau(optimizer, patience=3, threshold=5e-4,
-            verbose=True, factor=0.25)
+    Args:
+        args (ArgumentParser): arguments
+        optimizer (Optimizer): optimizer
+        num_steps (int): number of training steps
 
+    Returns:
+        lr_sched, warmup_sched: Tuple of both schedulers, or None if args.lr_schedule is False.
+    """
 
-    return None
+    if not args.lr_schedule:
+        return None, None
 
+    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps)
+    if args.lr_warmup_fn == 'linear':
+        warmup_scheduler = warmup.LinearWarmup(optimizer, warmup_period=args.lr_warmup)
+    elif args.lr_warmup_fn == 'exp':
+        warmup_scheduler = warmup.ExponentialWarmup(optimizer, warmup_period=args.lr_warmup)
+    else:
+        assert False, "Specified warump function not found."
+
+    return lr_scheduler, warmup_scheduler
 
 
 def get_activation(activation):
@@ -194,6 +234,106 @@ def get_activation(activation):
         assert False
 
 
+def get_model(args):
+    """Get pytorch model that is specified in args.arch.
+
+    Args:
+        args (ArgumentParser): ArgumentParser
+
+    Returns:
+        Model: model
+    """
+    if args.arch == 'CvMx':
+        return create_conv_mixer(args)
+    elif args.arch == 'ResNet50':
+        return create_resnet50()
+    elif args.arch == 'ResNet18':
+        return create_resnet18()
+    elif args.arch == 'ViT':
+        return create_vit(args)
+    elif args.arch == 'Swin':
+        return create_swin(args)
+    else:
+        assert False, "Model architecture not found."
+
+
+def create_swin(args):
+    return SwinTransformer(
+        img_size=128,
+        patch_size=args.p_size,
+        in_chans=10,
+        num_classes=19,
+        embed_dim=args.embed_dim,
+        attn_drop_rate=args.attn_drop,
+        drop_path_rate=args.path_drop,
+        drop_rate=args.drop,
+        window_size=8
+    )
+
+
+def create_vit(args):
+    return VisionTransformer(
+        img_size=120,
+        patch_size=args.p_size,
+        in_chans=10,
+        num_classes=19,
+        embed_dim=args.embed_dim,
+        depth=args.depth,
+        num_heads=args.num_heads,
+        attn_drop_rate=args.attn_drop,
+        drop_path_rate=args.path_drop,
+        drop_rate=args.drop
+    )
+
+
+def create_conv_mixer(args):
+    """Create a ConvMixer according to passed arguments.
+
+    Args:
+        args (ArgumentParser): Argumgents
+
+    Returns:
+        Model: ConvMixer
+    """
+    return CVMX.ConvMixer(
+        10,
+        args.h,
+        args.depth,
+        kernel_size=args.k_size,
+        patch_size=args.p_size,
+        n_classes=19,
+        activation=args.activation,
+        dilation=args.k_dilation,
+        residual=args.residual,
+        drop=args.drop
+    )
+
+
+def create_resnet50():
+    """Create a ResNet50 model according to passed arguments.
+
+    Returns:
+        Model: ConvMixer
+    """
+
+    model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=False)
+    model.conv1 = nn.Conv2d(10, 64, kernel_size=7, stride=2, padding=3, bias=False)
+    model.fc = nn.Linear(in_features=2048, out_features=19, bias=True)
+    return model
+
+def create_resnet18():
+    """Create a ResNet18 model according to passed arguments.
+
+    Returns:
+        Model: ConvMixer
+    """
+
+    model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=False)
+    model.conv1 = nn.Conv2d(10, 64, kernel_size=7, stride=2, padding=3, bias=False)
+    model.fc = nn.Linear(in_features=512, out_features=19, bias=True)
+    return model
+
+
 def get_dataloader(args, csv_file, apply_transforms, shuffle):
     """Return a dataloader.
 
@@ -210,8 +350,7 @@ def get_dataloader(args, csv_file, apply_transforms, shuffle):
     if apply_transforms:
         transforms = get_transformation_chain(args.augmentation)
 
-
-    ds = BenDataset(csv_file, args.BEN_LMDB_PATH, transforms=transforms, size=args.ds_size)
+    ds = BenDataset(csv_file, args.BEN_LMDB_PATH, transforms=transforms, size=args.ds_size, img_size=args.img_size)
     return DataLoader(ds, batch_size=args.batch_size, shuffle=shuffle, 
                       drop_last=True, pin_memory=True)
 
@@ -246,10 +385,10 @@ def setup_paths_and_hparams(args):
     # Allow dry runs for quick testing purpose
     if args.dry_run:
         args.epochs = 1
-        args.ds_size = 40
-        args.batch_size = 20
+        args.ds_size = 4
+        args.batch_size = 2
         args.lr = 0.1
-        args.run_tests = True
+        args.run_tests = 1
         # args.run_tests_n = 2
 
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ### test
-# sbatch train.sh "--augmentation=3 --h=10 --depth=4 --optimizer=Ranger21 --exp_name=testings --dry_run=True"
+# sbatch train.sh "--augmentation=2 --h=10 --depth=4 --optimizer=AdamW --exp_name=testings --dry_run=True"
 
 ### v1 Baseline depth-based model
 # sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=512 --depth=16 --optimizer=AdamW --exp_name=v1-depth-baseline"
@@ -20,9 +20,6 @@
 ### v3 Add data augmentation
 # sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=960 --depth=8 --optimizer=Ranger21 --augmentation=1 --exp_name=v3-augmentations"
 # sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=960 --depth=8 --optimizer=Ranger21 --augmentation=2 --exp_name=v3-augmentations"
-## -> sbatch resume.sh "--new_epochs=15 --model_dir=/scratch/jakhac/ConvMixer/runs/default/v3-augmentations/06-09_1118_11_CvMx-h=960-d=8-k=9-p=7_batch=512_lr=0.0001_mom=0.9_GELU_Ranger21_aug=2/ --ckpt_filename=25.ckpt"
-## sbatch train.sh "--epochs=40 --batch_size=512 --lr=0.0001 --h=960 --depth=8 --optimizer=Ranger21 --augmentation=2 --exp_name=v33-augmentations"
-
 # sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=960 --depth=8 --optimizer=Ranger21 --augmentation=3 --exp_name=v3-augmentations"
 # sbatch train.sh "--epochs=25 --batch_size=512 --lr=0.0001 --h=960 --depth=8 --optimizer=Ranger21 --augmentation=4 --exp_name=v3-augmentations"
 
@@ -89,3 +86,85 @@
 ### v15 Finetune AdamW with ReLU and h=1024
 # sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --h=1024 --depth=8 --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v15-AdamW_relu"
 # sbatch train.sh "--epochs=35 --batch_size=256 --lr=5e-5 --h=1024 --depth=8 --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v15-AdamW_relu"
+
+
+### v16 Can deeper ConvMixers compensate a small hidden dimension?
+#--- h1024 (benchmark for this experiment)
+# sota v15 comp-> "--epochs=25 --batch_size=256 --lr=1e-4 --h=1024 --depth=8  --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v15-AdamW_relu"
+#--- h960
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --h=960  --depth=8  --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v16-deep_cvmx"
+# sbatch train.sh "--epochs=30 --batch_size=128 --lr=1e-4 --h=960  --depth=16 --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v16-deep_cvmx"
+#--- h512
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --h=512  --depth=8  --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v16-deep_cvmx"
+# sbatch train.sh "--epochs=30 --batch_size=256 --lr=1e-4 --h=512  --depth=16 --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v16-deep_cvmx"
+
+
+### v17 Can deeper ConvMixers compensate low internal resolution?
+#--- p=5 benchmark (benchmark for this experiment / comparison)
+# sbatch train.sh "--epochs=30 --batch_size=256 --lr=1e-4 --h=512 --depth=8 --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v17-depth_psize"
+#--- p=7 v17-.*p=5|v17-.*p=7
+# sbatch train.sh "--epochs=30 --batch_size=256 --lr=1e-4 --h=512 --depth=8  --p_size=7 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v17-depth_psize"
+# sbatch train.sh "--epochs=30 --batch_size=256 --lr=1e-4 --h=512 --depth=12 --p_size=7 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v17-depth_psize"
+# sbatch train.sh "--epochs=30 --batch_size=256 --lr=1e-4 --h=512 --depth=16 --p_size=7 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v17-depth_psize"
+# sbatch train.sh "--epochs=30 --batch_size=256 --lr=1e-4 --h=512 --depth=20 --p_size=7 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v17-depth_psize"
+# sbatch train.sh "--epochs=35 --batch_size=256 --lr=1e-4 --h=512 --depth=24 --p_size=7 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v17-depth_psize"
+#--- p=9
+# sbatch train.sh "--epochs=30 --batch_size=256 --lr=1e-4 --h=512 --depth=8  --p_size=9 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v17-depth_psize"
+# sbatch train.sh "--epochs=30 --batch_size=256 --lr=1e-4 --h=512 --depth=16 --p_size=9 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v17-depth_psize"
+# sbatch train.sh "--epochs=35 --batch_size=256 --lr=1e-4 --h=512 --depth=24 --p_size=9 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v17-depth_psize"
+
+
+### v18 Add dilation to best performing model (first of v17)
+## v18|v16.*h=512-d=8
+# sbatch train.sh "--epochs=30 --batch_size=256 --lr=1e-4 --h=512 --depth=8 --p_size=5 --k_size=5 --k_dilation=2 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v18-dilation"
+
+
+### v19 Weight decay (default is 1e-2)
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --h=960  --depth=8  --p_size=5 --k_size=5 --optimizer=AdamW --decay=1e-1 --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v19-wdecay"
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --h=960  --depth=8  --p_size=5 --k_size=5 --optimizer=AdamW --decay=1e-3 --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v19-wdecay"
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --h=960  --depth=8  --p_size=5 --k_size=5 --optimizer=AdamW --decay=1e-4 --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v19-wdecay"
+
+
+### v20 Repeat best runs from v15 / v16
+# sbatch train.sh "--epochs=30 --batch_size=256 --lr=1e-4 --h=512  --depth=16 --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v20-normalized"
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --h=1024 --depth=8 --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v20-normalized"
+
+
+##### Comparison Models #####
+
+### r1 - ResNet-50
+# sbatch train.sh "--epochs=35 --batch_size=1024 --lr=1e-4 --optimizer=AdamW --lr_schedule=0 --arch=ResNet50 --augmentation=2 --exp_name=r1-baseline"
+# sbatch train.sh "--epochs=35 --batch_size=1024 --lr=1e-4 --optimizer=AdamW --lr_warmup_fn=linear --arch=ResNet50 --augmentation=2 --exp_name=r1-baseline"
+
+### r2 - Rerun with normalized data
+# sbatch train.sh "--epochs=35 --batch_size=1024 --lr=1e-4 --optimizer=AdamW --lr_warmup_fn=linear --arch=ResNet50 --augmentation=2 --exp_name=r2-normalized"
+# sbatch train.sh "--epochs=35 --batch_size=1024 --lr=1e-4 --optimizer=AdamW --lr_warmup_fn=linear --arch=ResNet18 --augmentation=2 --exp_name=r2-normalized"
+
+
+
+
+### t1 VisionTransformer
+# sbatch train.sh "--epochs=30 --batch_size=512 --lr=1e-4 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t1-baseline"
+# sbatch train.sh "--epochs=30 --batch_size=512 --lr=1e-5 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t1-baseline"
+
+### t2 Recommended hparams
+# sbatch train.sh "--epochs=30 --batch_size=1024 --lr=1e-4 --depth=8 --num_heads=8 --embed_dim=256 --p_size=20 --drop=0.2 --attn_drop=0.2 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t2-hparams"
+# sbatch train.sh "--epochs=30 --batch_size=1024 --lr=1e-4 --depth=12 --num_heads=8 --embed_dim=256 --p_size=20 --drop=0.2 --attn_drop=0.2 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t2-hparams"
+# sbatch train.sh "--epochs=30 --batch_size=1024 --lr=1e-4 --depth=8 --num_heads=8 --embed_dim=256 --p_size=16 --drop=0.2 --attn_drop=0.2 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t2-hparams"
+
+### t3 Change optimizing
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --depth=8 --num_heads=8 --embed_dim=256 --p_size=20 --drop=0.2 --attn_drop=0.2 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t3-batchsize"
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --depth=8 --num_heads=8 --embed_dim=256 --p_size=20 --drop=0.2 --attn_drop=0.2 --path_drop=0.2 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t3-batchsize"
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --depth=8 --num_heads=8 --embed_dim=256 --p_size=20 --drop=0.0 --attn_drop=0.0 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t3-batchsize"
+
+### t4 Change optimizing
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --depth=12 --num_heads=8 --embed_dim=256 --p_size=20 --drop=0.0 --attn_drop=0.0 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t4-arch"
+# sbatch train.sh "--epochs=25 --batch_size=128 --lr=1e-4 --depth=12 --num_heads=8 --embed_dim=256 --p_size=20 --drop=0.0 --attn_drop=0.0 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t4-arch"
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-5 --depth=12 --num_heads=8 --embed_dim=256 --p_size=20 --drop=0.0 --attn_drop=0.0 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t4-arch"
+
+
+
+### s1 Swin Transformer
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --embed_dim=96 --p_size=4 --drop=0.0 --attn_drop=0.0 --path_drop=0.1 --optimizer=AdamW --lr_warmup_fn=linear --arch=Swin --img_size=128 --augmentation=2 --exp_name=s1-base"
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --embed_dim=96 --p_size=8 --drop=0.0 --attn_drop=0.0 --path_drop=0.1 --optimizer=AdamW --lr_warmup_fn=linear --arch=Swin --img_size=128 --augmentation=2 --exp_name=s1-base"
+
