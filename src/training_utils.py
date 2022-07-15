@@ -22,8 +22,7 @@ from ben_dataset import BenDataset, get_transformation_chain
 from torch.utils.data import DataLoader
 
 from ben_dataset import *
-import conv_mixer as CVMX
-from training_utils import *
+import models
 
 import timm
 from timm.models.vision_transformer import VisionTransformer
@@ -147,14 +146,20 @@ def get_model_name(args):
         model_arch = f'{args.arch}-h={args.h}-d={args.depth}-k={args.k_size}-p={args.p_size}'
         model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}_aug={args.augmentation}{weight_decay}{res}{drop}{warmup_fn}{dil}'
         return f'{timestamp}_{model_arch}_{model_config}'
+
+    elif args.arch == 'CvChMx' or args.arch == 'ChMx':
+        model_arch = f'{args.arch}-h={args.h}-d={args.depth}-p={args.p_size}'
+        model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}_aug={args.augmentation}'
+        return f'{timestamp}_{model_arch}_{model_config}'
+
     elif args.arch == 'ResNet50' or args.arch == 'ResNet18':
         return f'{timestamp}_{args.arch}_batch={args.batch_size}_lr={args.lr}_{args.optimizer}_aug={args.augmentation}{warmup_fn}'
+
     elif args.arch == 'ViT':
-
-        # Default is:
-        # --p_size=16 --embed_dim=768 --depth=12 --attn_drop=0 --drop=0 --num_heads=12
-
-        return f'{timestamp}_{args.arch}_p={args.p_size}_emb={args.embed_dim}_d={args.depth}_heads_{args.num_heads}_drop={args.drop}_attn-drop={args.attn_drop}_path-drop{args.path_drop}_batch={args.batch_size}_lr={args.lr}_{args.optimizer}_aug={args.augmentation}{warmup_fn}'
+        return f'{timestamp}_{args.arch}_p={args.p_size}_emb={args.embed_dim}_d={args.depth}_heads={args.num_heads}_drop={args.drop}_attn-drop={args.attn_drop}_path-drop={args.path_drop}_batch={args.batch_size}_lr={args.lr}_{args.optimizer}_aug={args.augmentation}{warmup_fn}'
+    
+    elif args.arch == 'Swin':
+        return f'{timestamp}_{args.arch}_p={args.p_size}_emb={args.embed_dim}_d={args.depth}_heads={args.num_heads}_drop={args.drop}_attn-drop={args.attn_drop}_path-drop={args.path_drop}_win={args.window}_batch={args.batch_size}_lr={args.lr}_{args.optimizer}_aug={args.augmentation}{warmup_fn}'
 
 
 
@@ -245,6 +250,10 @@ def get_model(args):
     """
     if args.arch == 'CvMx':
         return create_conv_mixer(args)
+    elif args.arch == 'ChMx':
+        return create_channel_mixer(args)
+    elif args.arch == 'CvChMx':
+        return create_conv_channel_mixer(args)
     elif args.arch == 'ResNet50':
         return create_resnet50()
     elif args.arch == 'ResNet18':
@@ -267,7 +276,7 @@ def create_swin(args):
         attn_drop_rate=args.attn_drop,
         drop_path_rate=args.path_drop,
         drop_rate=args.drop,
-        window_size=8
+        window_size=args.window
     )
 
 
@@ -287,15 +296,7 @@ def create_vit(args):
 
 
 def create_conv_mixer(args):
-    """Create a ConvMixer according to passed arguments.
-
-    Args:
-        args (ArgumentParser): Argumgents
-
-    Returns:
-        Model: ConvMixer
-    """
-    return CVMX.ConvMixer(
+    return models.ConvMixer(
         10,
         args.h,
         args.depth,
@@ -306,6 +307,28 @@ def create_conv_mixer(args):
         dilation=args.k_dilation,
         residual=args.residual,
         drop=args.drop
+    )
+
+
+def create_conv_channel_mixer(args):
+    return models.ConvChannelMixer(
+        10,
+        args.h,
+        args.depth,
+        args.p_size,
+        n_classes=19,
+        activation=args.activation
+    )
+
+
+def create_channel_mixer(args):
+    return models.ChannelMixer(
+        10,
+        args.h,
+        args.depth,
+        args.p_size,
+        n_classes=19,
+        activation=args.activation
     )
 
 

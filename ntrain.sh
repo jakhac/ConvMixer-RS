@@ -130,6 +130,27 @@
 # sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --h=1024 --depth=8 --p_size=5 --k_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=v20-normalized"
 
 
+
+### c1 - ConvChannelMixer
+# sbatch train.sh "--arch=CvChMx --epochs=25 --batch_size=256 --lr=1e-4 --h=960 --depth=8  --p_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c1-cvchmx_baseline"
+# sbatch train.sh "--arch=CvChMx --epochs=25 --batch_size=256 --lr=1e-4 --h=960 --depth=8  --p_size=4 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c1-cvchmx_baseline"
+# sbatch train.sh "--arch=CvChMx --epochs=25 --batch_size=256 --lr=1e-4 --h=960 --depth=8  --p_size=3 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c1-cvchmx_baseline"
+
+# sbatch train.sh "--arch=CvChMx --epochs=25 --batch_size=256 --lr=1e-4 --h=960 --depth=16 --p_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c1-cvchmx_baseline"
+# sbatch train.sh "--arch=CvChMx --epochs=25 --batch_size=256 --lr=1e-4 --h=960 --depth=16 --p_size=4 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c1-cvchmx_baseline"
+
+
+### c2 - ChannelMixer
+# sbatch train.sh "--arch=ChMx --epochs=25 --batch_size=128 --lr=1e-4 --h=960 --depth=8  --p_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c2-chmx_baseline"
+# sbatch train.sh "--arch=ChMx --epochs=25 --batch_size=128 --lr=1e-4 --h=960 --depth=8  --p_size=4 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c2-chmx_baseline"
+# sbatch train.sh "--arch=ChMx --epochs=25 --batch_size=128 --lr=1e-4 --h=960 --depth=8  --p_size=3 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c2-chmx_baseline"
+
+# sbatch train.sh "--arch=ChMx --epochs=25 --batch_size=128 --lr=1e-4 --h=960 --depth=16 --p_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c2-chmx_baseline"
+# sbatch train.sh "--arch=ChMx --epochs=25 --batch_size=128 --lr=1e-4 --h=960 --depth=16 --p_size=4 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c2-chmx_baseline"
+
+
+
+
 ##### Comparison Models #####
 
 ### r1 - ResNet-50
@@ -160,11 +181,25 @@
 ### t4 Change optimizing
 # sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --depth=12 --num_heads=8 --embed_dim=256 --p_size=20 --drop=0.0 --attn_drop=0.0 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t4-arch"
 # sbatch train.sh "--epochs=25 --batch_size=128 --lr=1e-4 --depth=12 --num_heads=8 --embed_dim=256 --p_size=20 --drop=0.0 --attn_drop=0.0 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t4-arch"
+
 # sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-5 --depth=12 --num_heads=8 --embed_dim=256 --p_size=20 --drop=0.0 --attn_drop=0.0 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t4-arch"
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --depth=12 --num_heads=8 --embed_dim=256 --p_size=20 --drop=0.15 --attn_drop=0.0 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t4-arch"
+
+
+###  t5 Lower psize for comparison between SwinTransformer/ViT
+# sbatch train.sh "--epochs=25 --batch_size=64  --lr=1e-4 --depth=8 --num_heads=8 --embed_dim=256 --p_size=4 --drop=0.0 --attn_drop=0.0 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t5-psize"
+# sbatch train.sh "--epochs=25 --batch_size=128 --lr=1e-4 --depth=8 --num_heads=8 --embed_dim=256 --p_size=5 --drop=0.0 --attn_drop=0.0 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t5-psize"
+
+### t6 Lower psize and dropouts to prevent overfit
+# sbatch train.sh "--epochs=25 --batch_size=128 --lr=1e-4 --depth=8 --num_heads=8 --embed_dim=256 --p_size=5 --drop=0.1 --attn_drop=0.0 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t6-drops"
+# sbatch train.sh "--epochs=25 --batch_size=128 --lr=1e-4 --depth=8 --num_heads=8 --embed_dim=256 --p_size=5 --drop=0.2 --attn_drop=0.0 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t6-drops"
+# sbatch train.sh "--epochs=25 --batch_size=64 --lr=1e-4 --depth=8 --num_heads=8 --embed_dim=256 --p_size=5 --drop=0.2 --attn_drop=0.2 --path_drop=0.0 --optimizer=AdamW --lr_warmup_fn=linear --arch=ViT --augmentation=2 --exp_name=t6-drops"
+
 
 
 
 ### s1 Swin Transformer
-# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --embed_dim=96 --p_size=4 --drop=0.0 --attn_drop=0.0 --path_drop=0.1 --optimizer=AdamW --lr_warmup_fn=linear --arch=Swin --img_size=128 --augmentation=2 --exp_name=s1-base"
-# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --embed_dim=96 --p_size=8 --drop=0.0 --attn_drop=0.0 --path_drop=0.1 --optimizer=AdamW --lr_warmup_fn=linear --arch=Swin --img_size=128 --augmentation=2 --exp_name=s1-base"
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --embed_dim=96 --p_size=4 --drop=0.0 --attn_drop=0.0 --path_drop=0.1 --optimizer=AdamW --lr_warmup_fn=linear --arch=Swin --img_size=128 --augmentation=2 --exp_name=s1-baseline"
+# sbatch train.sh "--epochs=25 --batch_size=256 --lr=1e-4 --embed_dim=96 --p_size=8 --drop=0.0 --attn_drop=0.0 --path_drop=0.1 --optimizer=AdamW --lr_warmup_fn=linear --arch=Swin --img_size=128 --augmentation=2 --exp_name=s1-baseline"
+
 

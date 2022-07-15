@@ -9,7 +9,6 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.nn import DataParallel as DP
 
 from ben_dataset import *
-from conv_mixer import *
 from training_utils import *
 
 
@@ -63,7 +62,7 @@ def _parse_args():
     parser.add_argument('--img_size', type=int, default=120,
                         help='image resolution that is processed in models')
     parser.add_argument('--arch', type=str, default='CvMx',
-                        help='specify the model, \'CvMx\',  \'ResNet[18, 50]\', \'ViT\', \'Swin\'')
+                        help='specify the model, \'CvMx\', \'CvChMx\', \'ChMx\', \'ResNet[18, 50]\', \'ViT\', \'Swin\'')
 
 
     # (CvMx-) Model parameters
@@ -92,6 +91,10 @@ def _parse_args():
                         help='attention dropout rate')
     parser.add_argument('--path_drop', type=float, default=0.,
                         help='attention dropout rate')
+
+    parser.add_argument('--window', type=int, default=8,
+                        help='window size for SwinTransformer')
+
 
     return parser.parse_args()
 

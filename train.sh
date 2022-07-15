@@ -11,7 +11,7 @@
 #SBATCH --mem-per-cpu=0
 
 #SBATCH --cpus-per-task=1	# Anzahl CPU-Cores pro Prozess P
-#SBATCH --time=44:00:00 # Erwartete Laufzeit
+#SBATCH --time=60:00:00 # Erwartete Laufzeit
 #SBATCH --partition=gpu
 
 #Job-Status per Mail:
