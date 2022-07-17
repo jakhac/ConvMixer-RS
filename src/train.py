@@ -34,8 +34,8 @@ def _parse_args():
                         help='weight decay')
     parser.add_argument('--lr', type=float, default=0.01,
                         help='learning rate')
-    parser.add_argument('--lr_schedule', type=int, default=1,
-                        help='Apply LR scheduling')
+    parser.add_argument('--lr_scheduler', type=str, default='CosAnLR',
+                        help='Scheduler: \'CosAnLR\', \'MStepLR\', \'None\'')
     parser.add_argument('--lr_warmup', type=int, default=2000,
                         help='number of warump steps')
     parser.add_argument('--lr_warmup_fn', type=str, default='linear',
@@ -130,7 +130,7 @@ def run_training(args, writer):
 
     optimizer = get_optimizer(model, args, len(train_loader))
     num_steps = len(train_loader) * args.epochs
-    lr_scheduler, warmup_scheduler = get_scheduler(args, optimizer, num_steps)
+    lr_scheduler, warmup_scheduler, update_per_epoch = get_scheduler(args, optimizer, num_steps)
     criterion = nn.BCEWithLogitsLoss()
 
     args.n_params = sum(p.numel() for p in model.parameters())
@@ -146,12 +146,17 @@ def run_training(args, writer):
     for e in range(args.epochs):
 
         print(f'\n[{e+1:3d}/{args.epochs:3d}]')
+        print(f'Current LR:', optimizer.param_groups[0]['lr'])
 
         # Training
         model.train()
         loss, train_yyhat = train_batches(train_loader, model, optimizer, criterion, device,
-            scheduler=lr_scheduler, warmup_scheduler=warmup_scheduler)
+            update_per_epoch, scheduler=lr_scheduler, warmup_scheduler=warmup_scheduler)
         write_metrics(writer, 'train', train_yyhat, loss, e)
+
+        if warmup_scheduler and lr_scheduler and update_per_epoch:
+            # with warmup_scheduler.dampening():
+            lr_scheduler.step()
 
         # Validation
         model.eval()

@@ -1,13 +1,11 @@
 import torch
 import torch.nn as nn
 import training_utils
-from torchmetrics.functional import accuracy
-
 
 
 class MaxPoolEmbedding(nn.Module):
     """Generate input embedding by 1x1-convs to increase number of channels and then applies
-    patch_size x patch_size pooling to generate patches.
+    patch_size x patch_size pooling to decrease resolution and include some spatial-operation.
 
     Args:
         nn (nn.Module): nn.Modue
@@ -18,7 +16,7 @@ class MaxPoolEmbedding(nn.Module):
 
         # Patch embeddings:
         # - Pointwise convolutions to increase number of channels
-        # - 5x5-Pooling to generate patches and also include some kind of spatial-operation
+        # - (psize x psize)-Pooling to generate patches and also include some kind of spatial-operation
         self.patch_embedding = nn.Sequential(
             nn.Conv2d(input_dim, h, kernel_size=1),
             nn.MaxPool2d((patch_size, patch_size)),
@@ -35,7 +33,7 @@ class ConvEmbedding(nn.Module):
     """Generate input embedding by convolutions with adjusted stride.
 
     Args:
-        nn (nn.Module): nn.Modue
+        nn (nn.Module): nn.Module
     """
 
     def __init__(self, input_dim, h, patch_size, activation):

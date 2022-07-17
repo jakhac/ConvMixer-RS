@@ -76,7 +76,8 @@ class ConvChannelMixer(nn.Module):
 
 
 class ChannelMixer(nn.Module):
-    """Modified ConvMixer where input embeddings are produced by pooling and 1x1 convolutions. Only channel mixing is applied.
+    """Modified ConvMixer where input embeddings are produced by pooling and 1x1 convolutions.
+    Then, only channel mixing is applied.
 
     - MaxPoolEmbedding
     - Pointwise-Convolutions

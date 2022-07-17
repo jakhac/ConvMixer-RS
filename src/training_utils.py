@@ -1,4 +1,5 @@
 import os
+from xmlrpc.client import TRANSPORT_ERROR
 from dotenv import load_dotenv
 from natsort import natsorted
 from pathlib import Path
@@ -16,7 +17,6 @@ import torch.optim as optim
 import torch_optimizer as torch_optim
 import torch.nn as nn
 from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
-from torch.optim.lr_scheduler import OneCycleLR, ReduceLROnPlateau
 
 from ben_dataset import BenDataset, get_transformation_chain
 from torch.utils.data import DataLoader
@@ -24,14 +24,12 @@ from torch.utils.data import DataLoader
 from ben_dataset import *
 import models
 
-import timm
 from timm.models.vision_transformer import VisionTransformer
-# from timm.models.swin_transformer import SwinTransformer
 from timm.models.swin_transformer_v2 import SwinTransformerV2 as SwinTransformer
 
 
 
-def train_batches(train_loader, model, optimizer, criterion, dev, scheduler=None, warmup_scheduler=None):
+def train_batches(train_loader, model, optimizer, criterion, dev, update_per_epoch, scheduler=None, warmup_scheduler=None):
     """Perform a training step.
 
     Args:
@@ -67,7 +65,7 @@ def train_batches(train_loader, model, optimizer, criterion, dev, scheduler=None
         loss.backward()
         optimizer.step()
 
-        if warmup_scheduler and scheduler:
+        if warmup_scheduler and scheduler and not update_per_epoch:
             with warmup_scheduler.dampening():
                 scheduler.step()
 
@@ -135,7 +133,7 @@ def get_model_name(args):
 
     timestamp = datetime.now().strftime('%m-%d_%H%M_%S')
 
-    warmup_fn = f"_wfn={args.lr_warmup_fn}-{args.lr_warmup}" if args.lr_schedule else ""
+    warmup_fn = f"_{args.lr_scheduler}-wfn={args.lr_warmup_fn}-{args.lr_warmup}" if args.lr_scheduler != 'None' else ""
 
     if args.arch == 'CvMx':
         weight_decay = "" if args.decay is None else f"_dec={args.decay}"
@@ -149,7 +147,7 @@ def get_model_name(args):
 
     elif args.arch == 'CvChMx' or args.arch == 'ChMx':
         model_arch = f'{args.arch}-h={args.h}-d={args.depth}-p={args.p_size}'
-        model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}_aug={args.augmentation}'
+        model_config = f'batch={args.batch_size}_lr={args.lr}_mom={args.momentum}_{args.activation}_{args.optimizer}_aug={args.augmentation}{warmup_fn}'
         return f'{timestamp}_{model_arch}_{model_config}'
 
     elif args.arch == 'ResNet50' or args.arch == 'ResNet18':
@@ -203,21 +201,31 @@ def get_scheduler(args, optimizer, num_steps):
         num_steps (int): number of training steps
 
     Returns:
-        lr_sched, warmup_sched: Tuple of both schedulers, or None if args.lr_schedule is False.
+        lr_sched, warmup_sched, update_per_epoch: Tuple of both schedulers, or None if args.lr_schedule is False. Last var
+        determines whether the LR is updated every epoch or every batch.
     """
 
-    if not args.lr_schedule:
-        return None, None
+    # Select scheduler
+    if args.lr_scheduler == 'None':
+        return None, None, None
+    elif args.lr_scheduler == 'CosAnLR':
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps)
+        update_per_epoch = False
+    elif args.lr_scheduler == 'MStepLR':
+        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[10,20], gamma=0.25)
+        update_per_epoch = True
+    else:
+        assert False, "Error: No match for LR scheduler found."
 
-    lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_steps)
+    # Select Warmup function
     if args.lr_warmup_fn == 'linear':
         warmup_scheduler = warmup.LinearWarmup(optimizer, warmup_period=args.lr_warmup)
     elif args.lr_warmup_fn == 'exp':
         warmup_scheduler = warmup.ExponentialWarmup(optimizer, warmup_period=args.lr_warmup)
     else:
-        assert False, "Specified warump function not found."
+        assert False, "Specified warmup function not found."
 
-    return lr_scheduler, warmup_scheduler
+    return lr_scheduler, warmup_scheduler, update_per_epoch
 
 
 def get_activation(activation):
@@ -407,7 +415,7 @@ def setup_paths_and_hparams(args):
 
     # Allow dry runs for quick testing purpose
     if args.dry_run:
-        args.epochs = 1
+        args.epochs = 25
         args.ds_size = 4
         args.batch_size = 2
         args.lr = 0.1
