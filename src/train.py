@@ -155,7 +155,6 @@ def run_training(args, writer):
         write_metrics(writer, 'train', train_yyhat, loss, e)
 
         if warmup_scheduler and lr_scheduler and update_per_epoch:
-            # with warmup_scheduler.dampening():
             lr_scheduler.step()
 
         # Validation

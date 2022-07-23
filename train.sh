@@ -11,7 +11,7 @@
 #SBATCH --mem-per-cpu=0
 
 #SBATCH --cpus-per-task=1	# Anzahl CPU-Cores pro Prozess P
-#SBATCH --time=00:10:00 # Erwartete Laufzeit
+#SBATCH --time=48:00:00 # Erwartete Laufzeit
 #SBATCH --partition=gpu
 
 #Job-Status per Mail:
@@ -39,6 +39,7 @@ for gpu in $(echo "$ALL_GPUS"); do
 done
 
 echo "CUDA_VISIBLE_DEVICES: " $CUDA_VISIBLE_DEVICES
+
 
 cd /scratch/jakhac/ConvMixer/src
 

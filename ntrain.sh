@@ -142,21 +142,20 @@
 ### c2 - ChannelMixer
 # sbatch train.sh "--arch=ChMx --epochs=25 --batch_size=128 --lr=1e-4 --h=960 --depth=8  --p_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c2-chmx_baseline"
 # sbatch train.sh "--arch=ChMx --epochs=25 --batch_size=128 --lr=1e-4 --h=960 --depth=8  --p_size=4 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c2-chmx_baseline"
-# sbatch train.sh "--arch=ChMx --epochs=25 --batch_size=128 --lr=1e-4 --h=960 --depth=16 --p_size=5 --optimizer=AdamW --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c2-chmx_baseline"
 
 
 ### c3 LR fit
 # sbatch train.sh "--arch=CvChMx --epochs=25 --batch_size=256 --lr=5e-5 --h=960 --depth=16 --p_size=5 --optimizer=AdamW --lr_scheduler=CosAnLR --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c3-optims"
 # sbatch train.sh "--arch=CvChMx --epochs=30 --batch_size=256 --lr=1e-5 --h=960 --depth=16 --p_size=5 --optimizer=AdamW --lr_scheduler=CosAnLR --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c3-optims"
-# sbatch train.sh "--arch=CvChMx --epochs=30 --batch_size=256 --lr=1e-4 --h=960 --depth=16 --p_size=5 --optimizer=AdamW --lr_scheduler=MStepLR --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c3-optims"
-
-# sbatch train.sh "--arch=ChMx --epochs=25 --batch_size=256 --lr=5e-5 --h=960 --depth=16 --p_size=5 --optimizer=AdamW --lr_scheduler=CosAnLR --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c3-optims"
-# sbatch train.sh "--arch=ChMx --epochs=30 --batch_size=256 --lr=1e-5 --h=960 --depth=16 --p_size=5 --optimizer=AdamW --lr_scheduler=CosAnLR --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c3-optims"
-# sbatch train.sh "--arch=ChMx --epochs=30 --batch_size=256 --lr=1e-4 --h=960 --depth=16 --p_size=5 --optimizer=AdamW --lr_scheduler=MStepLR --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c3-optims"
+# sbatch train.sh "--arch=ChMx --epochs=25 --batch_size=128 --lr=5e-5 --h=960 --depth=16 --p_size=5 --optimizer=AdamW --lr_scheduler=CosAnLR --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c3-optims"
+# sbatch train.sh "--arch=ChMx --epochs=30 --batch_size=128 --lr=1e-5 --h=960 --depth=8 --p_size=5 --optimizer=AdamW --lr_scheduler=CosAnLR --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c3-optims"
 
 
-sbatch train.sh "--arch=ChMx --epochs=30 --batch_size=256 --lr=1e-4 --h=960 --depth=16 --p_size=5 --optimizer=AdamW --lr_scheduler=MStepLR --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=GPU"
-
+### c4 hparams
+# sbatch train.sh "--arch=CvChMx --epochs=30 --batch_size=512 --lr=1e-4 --h=960 --depth=14 --p_size=5 --optimizer=AdamW --lr_scheduler=CosAnLR --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c4-hparams"
+# sbatch train.sh "--arch=CvChMx --epochs=30 --batch_size=256 --lr=5e-5 --h=960 --depth=20 --p_size=5 --optimizer=AdamW --lr_scheduler=CosAnLR --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c4-hparams"
+# sbatch train.sh "--arch=CvChMx --epochs=30 --batch_size=256 --lr=5e-5 --h=960 --depth=24 --p_size=5 --optimizer=AdamW --lr_scheduler=CosAnLR --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c4-hparams"
+# sbatch train.sh "--arch=ChMx --epochs=30 --batch_size=128 --lr=5e-5 --h=960 --depth=16 --p_size=5 --optimizer=AdamW --lr_scheduler=CosAnLR --lr_warmup_fn=linear --activation=ReLU --augmentation=2 --exp_name=c4-hparams"
 
 
 ##### Comparison Models #####
